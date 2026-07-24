@@ -1,0 +1,41 @@
+services:
+  lidar-sr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        USER_ID: ${USER_ID:-1000}
+        GROUP_ID: ${GROUP_ID:-1000}
+        USER_NAME: ${USER_NAME:-research}
+        TORCH_VERSION: ${TORCH_VERSION:-2.9.1}
+        TORCHVISION_VERSION: ${TORCHVISION_VERSION:-0.24.1}
+    image: camera-operator-lidar-sr:cu128
+    container_name: camera-operator-lidar-sr
+    working_dir: /workspace
+    gpus: all
+    ipc: host
+    shm_size: "16gb"
+    stdin_open: true
+    tty: true
+    init: true
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      PYTHONPATH: /workspace/src
+      DATA_ROOT: /data
+      OUTPUT_ROOT: /outputs
+      CUDA_MODULE_LOADING: LAZY
+      TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+      OPENBLAS_NUM_THREADS: ${OPENBLAS_NUM_THREADS:-1}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-1}
+      MKL_NUM_THREADS: ${MKL_NUM_THREADS:-1}
+      WANDB_MODE: ${WANDB_MODE:-offline}
+    volumes:
+      - ./:/workspace
+      - ${DATA_ROOT:-./data}:/data
+      - ${OUTPUT_ROOT:-./outputs}:/outputs
+      - ${CACHE_ROOT:-./.cache}:/home/${USER_NAME:-research}/.cache
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+      - "${TENSORBOARD_PORT:-6006}:6006"
+    command: bash

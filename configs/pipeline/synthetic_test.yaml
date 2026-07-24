@@ -1,0 +1,29 @@
+schema_version: 1
+pipeline:
+  name: synthetic_test
+  output_root: outputs/pipelines
+  seed: 17
+  device: cpu
+  deterministic: true
+  fail_fast: true
+  resume: false
+  overwrite: false
+  allow_device_fallback: false
+dataset:
+  type: synthetic
+  processed_root: outputs/pipelines/synthetic_test/synthetic_data
+  sequences: {train: ["00"], validation: ["00"], test: ["00"]}
+  camera_id: 2
+  range_width: 8
+  input_row_indices: [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60]
+  max_frames_per_sequence: 2
+depth: {enabled: false, model: depth-anything/Depth-Anything-V2-Small-hf, device: cpu, batch_size: 1, overwrite: false}
+splits: {root: outputs/pipelines/synthetic_test/splits, train_file: train.txt, validation_file: validation.txt, test_file: test.txt, generate: true, allow_sequence_overlap: true}
+student: {enabled: true, experiment_name: student_baseline, epochs: 1, batch_size: 2, learning_rate: 0.0001, weight_decay: 0.0}
+teachers:
+  correct: {enabled: true, experiment_name: teacher_correct, depth_mode: correct, epochs: 1, batch_size: 1, learning_rate: 0.0002}
+  none: {enabled: true, experiment_name: teacher_none, depth_mode: none, epochs: 1, batch_size: 1, learning_rate: 0.0002}
+distillation: {enabled: true, experiment_name: distill_correct_soft, teacher: correct, depth_mode: correct, advantage_mode: soft, epochs: 1, batch_size: 1, learning_rate: 0.0001}
+evaluation: {enabled: true, evaluate_teachers: true, evaluate_student: true, evaluate_distilled: true, distance_bins: [0, 10, 20, 40, 80]}
+inference: {enabled: true, max_frames: 1, checkpoint: distillation}
+stages: {prepare_range_images: false, precompute_depth: false, create_splits: true, train_student: true, train_teachers: true, evaluate_teachers: true, train_distillation: true, evaluate_sr: true, inference: true}

@@ -1,0 +1,37 @@
+# Template: provide configs/kitti/hdl64_elevations.npy with calibrated HDL-64E
+# elevations in radians before running (preflight reports a precise error otherwise).
+schema_version: 1
+pipeline:
+  name: kitti_pilot
+  output_root: /outputs/pipelines
+  seed: 42
+  device: cuda
+  deterministic: false
+  fail_fast: true
+  resume: false
+  overwrite: false
+  allow_device_fallback: false
+dataset:
+  type: kitti_odometry
+  # KITTI Odometry archive layout: calib/color/velodyne are separate roots.
+  scan_root: /data/data_odometry_velodyne
+  image_root: /data/data_odometry_color
+  calibration_root: /data/data_odometry_calib
+  processed_root: /outputs/pipelines
+  sequences: {train: ["01", "02"], validation: ["08"], test: ["00"]}
+  camera_id: 2
+  range_width: 2048
+  target_elevation_file: configs/kitti/hdl64_elevations.npy
+  auto_estimate_elevation: true
+  input_row_indices: [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60]
+  max_frames_per_sequence: 50
+depth: {enabled: true, model: depth-anything/Depth-Anything-V2-Large-hf, device: cuda, batch_size: 1, overwrite: false}
+splits: {root: outputs/pipelines/kitti_pilot/splits, train_file: train.txt, validation_file: validation.txt, test_file: test.txt, generate: true, allow_sequence_overlap: false}
+student: {enabled: true, experiment_name: student_baseline, epochs: 1, batch_size: 2, learning_rate: 0.0001, weight_decay: 0.0}
+teachers:
+  correct: {enabled: true, experiment_name: teacher_correct, depth_mode: correct, epochs: 1, batch_size: 1, learning_rate: 0.0002}
+  none: {enabled: true, experiment_name: teacher_none, depth_mode: none, epochs: 1, batch_size: 1, learning_rate: 0.0002}
+distillation: {enabled: true, experiment_name: distill_correct_soft, teacher: correct, depth_mode: correct, advantage_mode: soft, epochs: 1, batch_size: 1, learning_rate: 0.0001}
+evaluation: {enabled: true, evaluate_teachers: true, evaluate_student: true, evaluate_distilled: true, distance_bins: [0, 10, 20, 40, 60, 80]}
+inference: {enabled: true, max_frames: 5, checkpoint: distillation}
+stages: {prepare_range_images: true, precompute_depth: true, create_splits: true, train_student: true, train_teachers: true, evaluate_teachers: true, train_distillation: true, evaluate_sr: true, inference: true}

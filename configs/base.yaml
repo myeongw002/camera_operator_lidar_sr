@@ -1,0 +1,38 @@
+seed: 42
+device: cuda
+precision: bf16
+
+data:
+  width: 2048
+  input_beams: 16
+  target_beams: 64
+  min_range: 1.0
+  max_range: 80.0
+  # LiDAR convention: x forward, y left, z up; azimuth bins cover [-pi, pi).
+  azimuth_origin_rad: -3.141592653589793
+  azimuth_bin_reference: center
+  row_assignment_tolerance_rad: 0.003
+  exact_elevation_tolerance_rad: 0.00001
+
+operator:
+  horizontal_radius: 1
+  residual_scale_alpha: 1.5
+  residual_min: 0.1
+  residual_max: 3.0
+  temperature: 2.0
+  all_invalid_return_logit: -20.0
+
+model:
+  lidar_feature_dim: 96
+  depth_feature_dim: 32
+  operator_hidden_dim: 128
+
+loss:
+  huber_delta: 1.0
+  lambda_return: 1.0
+  lambda_residual_reg: 0.01
+  lambda_kd_operator: 1.0
+  lambda_kd_return: 0.2
+  lambda_kd_residual: 0.05
+  advantage_margin: 0.0
+  advantage_temperature: 1.0

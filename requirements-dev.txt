@@ -1,0 +1,8 @@
+pytest==8.3.5
+pytest-cov==6.0.0
+ruff==0.9.10
+mypy==1.15.0
+pre-commit==4.1.0
+ipython==8.32.0
+ipykernel==6.29.5
+jupyterlab==4.3.5

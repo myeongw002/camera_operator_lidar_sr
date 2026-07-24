@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+.venv/
+.coverage
+htmlcov/
+*.egg-info/
+.env
+checkpoints/
+outputs/
+results/
+.vscode/
+old.ckpt

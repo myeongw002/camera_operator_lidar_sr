@@ -1,0 +1,11 @@
+defaults: [../base]
+train:
+  stage: teacher
+  epochs: 30
+  batch_size: 1
+  learning_rate: 0.0002
+  num_workers: 2
+depth:
+  model_id: depth-anything/Depth-Anything-V2-Small-hf
+  output_type: relative_inverse_depth
+  oracle: gt_lidar_zbuffer

@@ -1,0 +1,13 @@
+defaults: [../base]
+train:
+  stage: distill
+  epochs: 20
+  batch_size: 1
+  learning_rate: 0.0001
+  num_workers: 2
+advantage:
+  mode: soft
+  range_margin: 0.1
+  range_temperature: 0.1
+  return_margin: 0.05
+  return_temperature: 0.1

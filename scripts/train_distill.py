@@ -94,9 +94,13 @@ def main():
     validation_loader = DataLoader(validation, batch_size=args.batch_size, collate_fn=collate_frames) if validation else None
     for epoch in range(start, args.epochs):
         student.train(); total = 0.0; sums = empty_distillation_statistics()
-        for batch in loader:
+        batch_count, report_every = len(loader), max(1, len(loader) // 10)
+        print(f"[distill:{args.depth_mode}] epoch {epoch + 1}/{args.epochs}: frames={len(dataset)} batches={batch_count}", flush=True)
+        for batch_index, batch in enumerate(loader, start=1):
             values = module(_move(batch, args.device)); optimizer.zero_grad(set_to_none=True); values["loss"].backward(); optimizer.step(); step += 1
             total += float(values["loss"].detach()); add_distillation_statistics(sums, values)
+            if batch_index == batch_count or batch_index % report_every == 0:
+                print(f"[distill:{args.depth_mode}] epoch {epoch + 1}/{args.epochs} batch {batch_index}/{batch_count} loss={float(values['loss'].detach()):.6f}", flush=True)
         score = count = None; is_best = False
         if validation_loader:
             student.eval(); accumulator = ValidationRangeAccumulator()

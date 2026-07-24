@@ -102,10 +102,14 @@ def main():
     validation_loader = DataLoader(validation, batch_size=args.batch_size, collate_fn=collate_frames) if validation else None
     for epoch in range(start, args.epochs):
         model.train(); total = 0.0
-        for batch in loader:
+        batch_count, report_every = len(loader), max(1, len(loader) // 10)
+        print(f"[student] epoch {epoch + 1}/{args.epochs}: frames={len(dataset)} batches={batch_count}", flush=True)
+        for batch_index, batch in enumerate(loader, start=1):
             losses = module(_move(batch, args.device))
             optimizer.zero_grad(set_to_none=True); losses["loss"].backward(); optimizer.step()
             step += 1; total += float(losses["loss"].detach())
+            if batch_index == batch_count or batch_index % report_every == 0:
+                print(f"[student] epoch {epoch + 1}/{args.epochs} batch {batch_index}/{batch_count} loss={float(losses['loss'].detach()):.6f}", flush=True)
         score = count = None; is_best = False
         if validation_loader:
             model.eval(); accumulator = ValidationRangeAccumulator()

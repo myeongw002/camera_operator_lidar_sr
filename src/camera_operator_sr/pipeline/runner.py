@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -72,7 +73,8 @@ class PipelineContext:
     @property
     def target_elevation_file(self) -> Path:
         generated = self.root / "calibration" / "estimated_hdl64_elevations.npy"
-        return self.generated_elevation_file or (generated if generated.exists() else Path(self.config["dataset"]["target_elevation_file"]))
+        configured = self.config["dataset"].get("target_elevation_file")
+        return self.generated_elevation_file or (generated if generated.exists() else Path(configured) if configured else self.root / "calibration" / "not_configured.npy")
     @property
     def train_split(self) -> Path: return self.splits_root / self.config["splits"]["train_file"]
     @property
@@ -87,6 +89,8 @@ class PipelineRunner:
         self.context = PipelineContext(config, root, config_path, str(config["pipeline"]["device"]))
         self.resume, self.overwrite, self.dry_run, self.skip_path_validation = resume or config["pipeline"].get("resume", False), overwrite or config["pipeline"].get("overwrite", False), dry_run, skip_path_validation
         self.force_stages = set(force_stages or ())
+        self._active_process: subprocess.Popen | None = None
+        self._active_stage: str | None = None
         unknown = self.force_stages - set(STAGES)
         if unknown: raise ValueError("unknown stage name: " + sorted(unknown)[0])
         if self.overwrite and root.exists() and not dry_run: shutil.rmtree(root)
@@ -139,7 +143,11 @@ class PipelineRunner:
         environment = dict(os.environ); environment["PYTHONPATH"] = "src" + (":" + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else ""); environment["PYTHONUNBUFFERED"] = "1"
         print(f"{stage_id}: {' '.join(command)}", flush=True)
         with (root / "logs" / f"{stage_id}.stdout.log").open("w") as stdout, (root / "logs" / f"{stage_id}.stderr.log").open("w") as stderr:
-            process = subprocess.Popen(command, cwd=".", env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+            # A process group contains model-download helpers and other
+            # grandchildren as well as the script itself.  It is terminated as
+            # one unit on Ctrl+C, docker stop (SIGTERM), or runner interruption.
+            process = subprocess.Popen(command, cwd=".", env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1, start_new_session=True)
+            self._active_process, self._active_stage = process, stage_id
 
             def relay(pipe, log, terminal) -> None:
                 assert pipe is not None
@@ -153,9 +161,35 @@ class PipelineRunner:
                 threading.Thread(target=relay, args=(process.stderr, stderr, sys.stderr), daemon=True),
             ]
             for worker in workers: worker.start()
-            code = process.wait()
-            for worker in workers: worker.join()
-            return code
+            previous = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
+
+            def interrupt(number, _frame):
+                name = signal.Signals(number).name
+                print(f"{stage_id}: received {name}; stopping stage process group", file=sys.stderr, flush=True)
+                self._terminate_process_group(process)
+                raise KeyboardInterrupt
+
+            for number in previous: signal.signal(number, interrupt)
+            try:
+                return process.wait()
+            except KeyboardInterrupt:
+                self._terminate_process_group(process)
+                try: process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self._terminate_process_group(process, force=True); process.wait()
+                raise RuntimeError(f"{stage_id} interrupted by user or container stop")
+            finally:
+                for number, handler in previous.items(): signal.signal(number, handler)
+                for worker in workers: worker.join()
+                self._active_process, self._active_stage = None, None
+
+    @staticmethod
+    def _terminate_process_group(process: subprocess.Popen, *, force: bool = False) -> None:
+        if process.poll() is not None: return
+        try:
+            os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+        except ProcessLookupError:
+            pass
 
     def _experiment_checkpoint(self, section: dict) -> Path:
         return self.context.experiments_root / section["experiment_name"] / f"seed_{self.context.config['pipeline']['seed']}" / "checkpoints" / "best.ckpt"
@@ -394,8 +428,10 @@ class PipelineRunner:
             choice = c.config["inference"].get("checkpoint", "distillation")
             checkpoint = c.artifacts["student_best_checkpoint"] if choice == "student" else c.artifacts["distillation_best_checkpoint"]
             frames = [c.processed_root / entry for entry in c.test_entries[:int(c.config["inference"].get("max_frames", 1))]]
-            for frame in frames:
+            print(f"[P11_inference] selected frames: {len(frames)}", flush=True)
+            for index, frame in enumerate(frames, start=1):
                 output = c.root / "inference" / choice / frame.parent.name / f"{frame.name}.npz"
+                print(f"[P11_inference] frame {index}/{len(frames)}: {frame.parent.name}/{frame.name}", flush=True)
                 if self._run_command(stage_id + "_" + frame.name, commands.inference(c, checkpoint, frame, output)): raise RuntimeError("inference failed")
             return
         if stage_id == "P12_summary": build_summary(c, self.state.value); return
@@ -475,21 +511,27 @@ class PipelineRunner:
         write_json_atomic(self.context.root/"pipeline_manifest.json", {"schema_version": 1, "config_sha256": sha256(self.context.config_path), "created_at_utc": now(), "hash_policy": "full SHA-256 for config/splits/checkpoints"})
         self._hydrate_artifacts()
         failed = False
-        for stage in selected:
+        total_stages = len(selected)
+        for index, stage in enumerate(selected, start=1):
+            prefix = f"[{index}/{total_stages}] {stage}"
             if stage in self.disabled:
+                print(f"{prefix}: SKIPPED (disabled by config)", flush=True)
                 self.state.update(stage, "SKIPPED", reason="disabled by config"); continue
             if failed or any(self.state.value["stages"].get(dep, {}).get("status") in {"FAILED", "BLOCKED"} for dep in DEPENDENCIES[stage] if dep in selected):
+                print(f"{prefix}: BLOCKED (upstream failed)", flush=True)
                 self.state.update(stage, "BLOCKED", reason="upstream failed"); continue
             fingerprint = self._fingerprint(stage)
             previous = self.state.value["stages"].get(stage, {})
             if self.resume and stage not in self.invalidated and previous.get("status") in {"SUCCEEDED", "SKIPPED"} and previous.get("fingerprint") == fingerprint:
-                try: self._validate_outputs(stage); self.state.update(stage, "SKIPPED", reason="validated resume", fingerprint=fingerprint); continue
+                try:
+                    self._validate_outputs(stage); print(f"{prefix}: SKIPPED (validated resume)", flush=True); self.state.update(stage, "SKIPPED", reason="validated resume", fingerprint=fingerprint); continue
                 except Exception as error:
                     self.invalidated |= downstream(stage)
                     self.context.warnings.append(f"{stage} output validation failed; rerunning: {error}")
+            print(f"{prefix}: STARTED", flush=True)
             self.state.update(stage, "RUNNING", fingerprint=fingerprint, command=[]); self._record_event({"stage": stage, "status": "RUNNING", "time": now()})
             try:
-                self._execute_stage(stage); self._validate_outputs(stage); self.state.update(stage, "SUCCEEDED", fingerprint=fingerprint, outputs=[str(path) for path in self._expected(stage)], return_code=0); self._record_event({"stage": stage, "status": "SUCCEEDED", "time": now()})
+                self._execute_stage(stage); self._validate_outputs(stage); self.state.update(stage, "SUCCEEDED", fingerprint=fingerprint, outputs=[str(path) for path in self._expected(stage)], return_code=0); self._record_event({"stage": stage, "status": "SUCCEEDED", "time": now()}); print(f"{prefix}: SUCCEEDED", flush=True)
             except Exception as error:
                 message = f"{stage}: FAILED: {error}"
                 print(message, file=sys.stderr, flush=True)
@@ -497,8 +539,11 @@ class PipelineRunner:
                 with (logs / f"{stage}.stderr.log").open("a") as handle: handle.write(message + "\n")
                 self.state.update(stage, "FAILED", error=str(error), return_code=1); self._record_event({"stage": stage, "status": "FAILED", "error": str(error), "time": now()}); failed = True
                 if self.context.config["pipeline"].get("fail_fast", True):
-                    for later in selected[selected.index(stage)+1:]: self.state.update(later, "BLOCKED", reason=f"blocked by {stage}")
+                    for later_index, later in enumerate(selected[index:], start=index + 1):
+                        print(f"[{later_index}/{total_stages}] {later}: BLOCKED (blocked by {stage})", flush=True)
+                        self.state.update(later, "BLOCKED", reason=f"blocked by {stage}")
                     break
         self.state.finish("FAILED" if failed else "SUCCEEDED")
         build_summary(self.context, self.state.value)
+        print(f"pipeline status: {'FAILED' if failed else 'SUCCEEDED'}", flush=True)
         return 1 if failed else 0

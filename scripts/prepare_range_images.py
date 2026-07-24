@@ -34,9 +34,11 @@ def main() -> None:
     selected = None if args.frame_list is None else {line.strip() for line in args.frame_list.read_text().splitlines() if line.strip()}
     if selected is not None and not selected:
         raise ValueError("--frame-list contains no frames")
-    for scan_path in sorted(args.scan_root.glob("*.bin")):
-        if selected is not None and scan_path.stem not in selected:
-            continue
+    scans = [path for path in sorted(args.scan_root.glob("*.bin")) if selected is None or path.stem in selected]
+    if not scans:
+        raise ValueError("no selected scans found")
+    print(f"[prepare] selected frames: {len(scans)}", flush=True)
+    for index, scan_path in enumerate(scans, start=1):
         if args.calibration_root is None:
             K, T, image_size = np.eye(3, dtype=np.float32), np.eye(4, dtype=np.float32), (0, 0)
         else:
@@ -65,6 +67,7 @@ def main() -> None:
         np.save(frame / "input_intensity.npy", image.intensity.squeeze(0)[input_indices].numpy())
         np.save(frame / "input_valid.npy", image.valid.squeeze(0)[input_indices].numpy())
         np.savez_compressed(frame / "meta.npz", input_elevation=elevation[indices].numpy(), target_elevation=elevation.numpy(), azimuth=azimuth, K=K, T_cam_lidar=T, image_size=np.asarray(image_size, dtype=np.int32))
+        print(f"[prepare] frame {index}/{len(scans)}: {scan_path.stem}", flush=True)
 
 
 if __name__ == "__main__":

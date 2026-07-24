@@ -23,10 +23,10 @@ def _check(root,name,kind,depth,adv=None):
 
 def test_student_teacher_distillation_write_isolated_reproducible_outputs(tmp_path):
     _data(tmp_path); common=['--dataset-root',str(tmp_path),'--train-split',str(tmp_path/'train.txt'),'--val-split',str(tmp_path/'val.txt'),'--output-root',str(tmp_path/'outputs'),'--seed','42','--epochs','1','--device','cpu']
-    student=_run(['scripts/train_student.py','--experiment-name','student_baseline',*common]); assert student.returncode==0,student.stderr; assert '[student] epoch 1/1' in student.stdout
+    student=_run(['scripts/train_student.py','--experiment-name','student_baseline',*common]); assert student.returncode==0,student.stderr; assert '[student] epoch 1/1' in student.stdout and 'batch 1/1' in student.stdout
     sdir=_check(tmp_path,'student_baseline','student','none'); before=hashlib.sha256((sdir/'checkpoints'/'last.ckpt').read_bytes()).hexdigest()
-    teacher=_run(['scripts/train_teacher.py','--experiment-name','teacher_correct','--baseline-checkpoint',str(sdir/'checkpoints'/'last.ckpt'),'--depth-mode','correct',*common]); assert teacher.returncode==0,teacher.stderr; assert '[teacher:correct] epoch 1/1' in teacher.stdout
+    teacher=_run(['scripts/train_teacher.py','--experiment-name','teacher_correct','--baseline-checkpoint',str(sdir/'checkpoints'/'last.ckpt'),'--depth-mode','correct',*common]); assert teacher.returncode==0,teacher.stderr; assert '[teacher:correct] epoch 1/1' in teacher.stdout and 'batch 1/1' in teacher.stdout
     tdir=_check(tmp_path,'teacher_correct','teacher','correct'); adv={'mode':'soft','range_margin':.1,'range_temperature':.1,'return_margin':.05,'return_temperature':.1}
-    distill=_run(['scripts/train_distill.py','--experiment-name','distill_correct_soft','--baseline',str(sdir/'checkpoints'/'last.ckpt'),'--teacher',str(tdir/'checkpoints'/'last.ckpt'),'--depth-mode','correct','--advantage-mode','soft',*common]); assert distill.returncode==0,distill.stderr; assert '[distill:correct] epoch 1/1' in distill.stdout
+    distill=_run(['scripts/train_distill.py','--experiment-name','distill_correct_soft','--baseline',str(sdir/'checkpoints'/'last.ckpt'),'--teacher',str(tdir/'checkpoints'/'last.ckpt'),'--depth-mode','correct','--advantage-mode','soft',*common]); assert distill.returncode==0,distill.stderr; assert '[distill:correct] epoch 1/1' in distill.stdout and 'batch 1/1' in distill.stdout
     ddir=_check(tmp_path,'distill_correct_soft','distillation','correct',adv)
     assert len({sdir,tdir,ddir})==3 and hashlib.sha256((sdir/'checkpoints'/'last.ckpt').read_bytes()).hexdigest()==before

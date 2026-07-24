@@ -39,11 +39,12 @@ def main() -> None:
     if not paths:
         raise ValueError("no selected images found")
     pending = [path for path in paths if args.overwrite or not _valid_output(args.output_root / path.stem)]
+    print(f"[depth] selected frames: {len(paths)}; to_compute: {len(pending)}; reused: {len(paths) - len(pending)}", flush=True)
     if not pending:
         return
     from transformers import pipeline
     estimator = pipeline("depth-estimation", model=args.model, device=args.device)
-    for image_path in pending:
+    for index, image_path in enumerate(pending, start=1):
         image = Image.open(image_path).convert("RGB")
         result = estimator(image)
         predicted = result["predicted_depth"]
@@ -64,6 +65,7 @@ def main() -> None:
         np.save(target / "relative_depth.npy", np.where(valid, depth_np, 0).astype(np.float32))
         np.save(target / "depth_valid.npy", valid.astype(np.uint8))
         np.savez_compressed(target / "depth_meta.npz", model_name=args.model, input_resolution=np.asarray([image.height, image.width]), output_type="relative_inverse_depth")
+        print(f"[depth] frame {index}/{len(pending)}: {image_path.stem}", flush=True)
 
 
 if __name__ == "__main__":

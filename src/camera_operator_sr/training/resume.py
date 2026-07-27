@@ -5,7 +5,7 @@ from torch import nn
 from torch.optim import Optimizer
 import torch
 
-from .checkpoint import CHECKPOINT_SCHEMA_VERSION
+from .checkpoint import CHECKPOINT_SCHEMA_VERSION, LEGACY_CHECKPOINT_SCHEMA_VERSION
 from .reproducibility import restore_rng_state
 
 
@@ -29,19 +29,19 @@ class ResumeState:
 
 
 def validate_training_checkpoint(checkpoint: dict, *, experiment_type: str) -> None:
-    if checkpoint.get("checkpoint_schema_version") != CHECKPOINT_SCHEMA_VERSION:
-        raise ValueError("Resume requires checkpoint schema version 3")
+    if checkpoint.get("checkpoint_schema_version") not in {LEGACY_CHECKPOINT_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION}:
+        raise ValueError("Resume requires checkpoint schema version 3 or 4")
     missing = sorted(TRAINING_CHECKPOINT_KEYS - checkpoint.keys())
     if missing:
-        raise ValueError("Schema 3 checkpoint missing resume metadata: " + ", ".join(missing))
+        raise ValueError("Checkpoint missing resume metadata: " + ", ".join(missing))
     if checkpoint["experiment_type"] != experiment_type:
         raise ValueError(
             f"Resume experiment type mismatch: {checkpoint['experiment_type']} != {experiment_type}"
         )
     if not checkpoint["loss_config"]:
-        raise ValueError("Schema 3 checkpoint has empty loss_config")
+        raise ValueError("Checkpoint has empty loss_config")
     if checkpoint["rng_state"] is None:
-        raise ValueError("Schema 3 checkpoint has no RNG state")
+        raise ValueError("Checkpoint has no RNG state")
 
 
 def restore_training_state(checkpoint: dict, *, model: nn.Module, optimizer: Optimizer,

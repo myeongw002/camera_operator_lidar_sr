@@ -23,7 +23,7 @@ dataset:
   range_width: 2048
   target_elevation_file: configs/kitti/hdl64_elevations.npy
   auto_estimate_elevation: true
-  input_row_indices: [0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60]
+  input_row_indices: [0, 4, 8, 13, 17, 21, 25, 29, 34, 38, 42, 46, 50, 55, 59, 63]
   max_frames_per_sequence: 1000
 depth: {enabled: true, model: depth-anything/Depth-Anything-V2-Large-hf, device: cuda, batch_size: 1, overwrite: false}
 splits: {root: outputs/pipelines/kitti_pilot/splits, train_file: train.txt, validation_file: validation.txt, test_file: test.txt, generate: true, allow_sequence_overlap: false}

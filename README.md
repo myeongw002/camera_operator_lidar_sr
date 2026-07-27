@@ -6,6 +6,8 @@ The repository implements a 64→16 synthetic-input LiDAR super-resolution basel
 
 `prepare_range_images.py` emits one frame directory with target/input range, intensity, validity arrays and `meta.npz`. `meta.npz` holds the versioned input/target beam angles, azimuth bin centres, `K`, and `T_cam_lidar`. The current KITTI configuration is an MVP synthetic beam table; replace it with the calibrated scanner table before reporting sensor-specific results.
 
+L0 uses the full-FOV 16-row contract `[0, 4, 8, 13, 17, 21, 25, 29, 34, 38, 42, 46, 50, 55, 59, 63]`. Existing processed data created with the prior row list is stale for L0; rerun `prepare_range_images.py` before training or evaluating L0.
+
 Generated rows are the 48 target rows not exactly present in the synthetic 16-row input. During inference, `fuse_observed_rows` preserves the real observed rows.
 
 ## Run

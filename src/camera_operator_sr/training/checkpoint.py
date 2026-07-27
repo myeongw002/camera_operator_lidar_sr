@@ -11,7 +11,8 @@ from camera_operator_sr.geometry.candidate_graph import expected_candidate_count
 from camera_operator_sr.geometry.validation import assert_shared_geometry
 
 
-CHECKPOINT_SCHEMA_VERSION = 3
+CHECKPOINT_SCHEMA_VERSION = 4
+LEGACY_CHECKPOINT_SCHEMA_VERSION = 3
 GEOMETRY_KEYS = (
     "input_elevation", "target_elevation", "azimuth", "width",
     "input_beam_count", "target_beam_count", "candidate_horizontal_radius",
@@ -80,13 +81,17 @@ def extract_dataset_geometry(sample_or_batch: dict, *, candidate_horizontal_radi
 
 def geometry_from_sample(sample: dict, model: nn.Module) -> dict:
     radius = int(getattr(model, "horizontal_radius", getattr(model, "model_config", {}).get("horizontal_radius", 1)))
-    return build_geometry_metadata(input_elevation=sample["lidar"]["elevation"], target_elevation=sample["target"]["elevation"], azimuth=sample["lidar"]["azimuth"], candidate_horizontal_radius=radius)
+    geometry = build_geometry_metadata(input_elevation=sample["lidar"]["elevation"], target_elevation=sample["target"]["elevation"], azimuth=sample["lidar"]["azimuth"], candidate_horizontal_radius=radius)
+    if getattr(model, "model_type", None) == "relation_l0":
+        geometry.update(candidate_layout="lower[-1,0,+1],upper[-1,0,+1]", anchor_slots=[1, 4])
+    return geometry
 
 
 def save_checkpoint(path: str | Path, model: nn.Module, *, epoch: int, global_step: int, sample: dict, optimizer=None, data_config: dict | None = None, operator_config: dict | None = None, loss_config: dict | None = None, dataset_split: str | None = None, depth_mode: str = "none", validation_score: float | None = None, validation_count: int | None = None, experiment_metadata: dict | None = None, advantage_config: dict | None = None, rng_state: dict | None = None, best_validation_score: float | None = None, best_epoch: int | None = None, best_global_step: int | None = None, source_checkpoints: dict | None = None) -> None:
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
     geometry = geometry_from_sample(sample, model)
-    payload = {"checkpoint_schema_version": CHECKPOINT_SCHEMA_VERSION, "geometry": geometry, "model": model.state_dict(), "model_config": getattr(model, "model_config", {}), "data_config": data_config or {}, "operator_config": operator_config or {}, "loss_config": loss_config or {}, "dataset_split": dataset_split, "depth_mode": str(depth_mode), "epoch": epoch, "global_step": global_step, "rng_state": rng_state, "source_checkpoints": source_checkpoints or {}}
+    schema = CHECKPOINT_SCHEMA_VERSION if getattr(model, "model_type", None) == "relation_l0" else LEGACY_CHECKPOINT_SCHEMA_VERSION
+    payload = {"checkpoint_schema_version": schema, "geometry": geometry, "model": model.state_dict(), "model_config": getattr(model, "model_config", {}), "data_config": data_config or {}, "operator_config": operator_config or {}, "loss_config": loss_config or {}, "dataset_split": dataset_split, "depth_mode": str(depth_mode), "epoch": epoch, "global_step": global_step, "rng_state": rng_state, "source_checkpoints": source_checkpoints or {}}
     if optimizer is not None: payload["optimizer"] = optimizer.state_dict()
     if validation_score is not None or validation_count is not None:
         if validation_score is None or validation_count is None or validation_count == 0:
@@ -109,7 +114,8 @@ def save_checkpoint(path: str | Path, model: nn.Module, *, epoch: int, global_st
 
 
 def _checkpoint_geometry(checkpoint: dict) -> dict:
-    if checkpoint.get("checkpoint_schema_version") != CHECKPOINT_SCHEMA_VERSION or "geometry" not in checkpoint:
+    schema = checkpoint.get("checkpoint_schema_version")
+    if schema not in {LEGACY_CHECKPOINT_SCHEMA_VERSION, CHECKPOINT_SCHEMA_VERSION} or "geometry" not in checkpoint:
         raise ValueError("Checkpoint does not contain geometry metadata. This checkpoint predates schema version 2.")
     geometry = checkpoint["geometry"]
     missing = [key for key in GEOMETRY_KEYS if key not in geometry]
@@ -119,6 +125,9 @@ def _checkpoint_geometry(checkpoint: dict) -> dict:
         raise ValueError("Checkpoint geometry metadata has inconsistent candidate_count")
     if int(geometry["width"]) != len(geometry["azimuth"]) or int(geometry["input_beam_count"]) != len(geometry["input_elevation"]) or int(geometry["target_beam_count"]) != len(geometry["target_elevation"]):
         raise ValueError("Checkpoint geometry metadata has inconsistent width or beam counts")
+    if schema == CHECKPOINT_SCHEMA_VERSION:
+        if geometry.get("candidate_layout") != "lower[-1,0,+1],upper[-1,0,+1]" or geometry.get("anchor_slots") != [1, 4]:
+            raise ValueError("Relation checkpoint geometry metadata has incompatible candidate layout")
     return geometry
 
 

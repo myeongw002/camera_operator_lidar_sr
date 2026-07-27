@@ -9,8 +9,8 @@ import torch
 
 from camera_operator_sr.data.collate import collate_frames
 from camera_operator_sr.data.dataset import LidarInferenceDataset
-from camera_operator_sr.inference import fuse_observed_rows
-from camera_operator_sr.models.student import LidarOperatorStudent
+from camera_operator_sr.inference import fuse_observed_ranges, fuse_observed_rows
+from camera_operator_sr.models.factory import build_model
 from camera_operator_sr.training.checkpoint import load_project_checkpoint, validate_checkpoint_geometry
 
 
@@ -27,17 +27,23 @@ def main() -> None:
     batch = {key: {subkey: value.to(args.device) if isinstance(value, torch.Tensor) else value for subkey, value in part.items()} if isinstance(part, dict) else part for key, part in batch.items()}
     checkpoint = load_project_checkpoint(args.checkpoint, map_location=args.device)
     if debug: print(f"[debug:infer] checkpoint_loaded checkpoint={args.checkpoint}", flush=True)
-    model = LidarOperatorStudent(**checkpoint["model_config"]).to(args.device).eval()
+    model = build_model(checkpoint["model_config"]).to(args.device).eval()
     validate_checkpoint_geometry(checkpoint, batch)
     model.load_state_dict(checkpoint["model"])
     with torch.no_grad():
         if debug: print("[debug:infer] model_forward_start", flush=True)
         output = model(batch)
-        ranges, probability = fuse_observed_rows(output, batch)
+        if checkpoint["model_config"].get("model_type") == "relation_l0":
+            ranges = fuse_observed_ranges(output, batch)
+        else:
+            ranges, probability = fuse_observed_rows(output, batch)
         if debug: print("[debug:infer] model_forward_done", flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if debug: print(f"[debug:infer] save_start output={args.output}", flush=True)
-    np.savez_compressed(args.output, range=ranges.cpu().numpy(), return_probability=probability.cpu().numpy(), anchor_entropy=(-(output.anchor_weights * torch.log(output.anchor_weights.clamp_min(1e-8))).sum(-1)).cpu().numpy(), residual=output.residual.cpu().numpy())
+    if checkpoint["model_config"].get("model_type") == "relation_l0":
+        np.savez_compressed(args.output, range=ranges.cpu().numpy(), prior_weights=output.prior_weights.cpu().numpy(), final_weights=output.final_weights.cpu().numpy(), correction=output.correction.cpu().numpy())
+    else:
+        np.savez_compressed(args.output, range=ranges.cpu().numpy(), return_probability=probability.cpu().numpy(), anchor_entropy=(-(output.anchor_weights * torch.log(output.anchor_weights.clamp_min(1e-8))).sum(-1)).cpu().numpy(), residual=output.residual.cpu().numpy())
     if debug: print("[debug:infer] save_done", flush=True)
 
 

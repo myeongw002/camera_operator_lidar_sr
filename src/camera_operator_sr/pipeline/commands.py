@@ -21,6 +21,11 @@ def depth(context, sequence: str, *, force: bool = False) -> list[str]:
 
 def student(context, mode: str | None = None) -> list[str]:
     cfg = context.config["student"]
+    if cfg.get("model_type", "legacy_operator") == "relation_l0":
+        command = python("scripts/train_relation_l0.py") + training_common(context, cfg, mode)
+        for key, flag, default in (("batch_size", "--batch-size", 2), ("learning_rate", "--learning-rate", 3e-4), ("weight_decay", "--weight-decay", 0.0), ("horizontal_radius", "--horizontal-radius", 1), ("point_hidden_dim", "--point-hidden-dim", 24), ("relation_hidden_dim", "--relation-hidden-dim", 64), ("correction_limit", "--correction-limit", 3.0), ("correction_reg_weight", "--correction-reg-weight", 1e-3)):
+            command += [flag, str(cfg.get(key, default))]
+        return command + (["--use-intensity"] if cfg.get("use_intensity", True) else ["--no-use-intensity"])
     return python("scripts/train_student.py") + training_common(context, cfg, mode) + ["--batch-size", str(cfg.get("batch_size", 2)), "--learning-rate", str(cfg.get("learning_rate", 3e-4)), "--weight-decay", str(cfg["weight_decay"])]
 
 def teacher(context, name: str, mode: str | None = None) -> list[str]:
@@ -39,7 +44,8 @@ def teacher_evaluation(context) -> list[str]:
 
 def sr_evaluation(context, checkpoint: Path, name: str) -> list[str]:
     bins = context.config["evaluation"].get("distance_bins", [])
-    return python("scripts/evaluate_sr.py") + ["--checkpoint", str(checkpoint), "--dataset-root", str(context.processed_root), "--split-file", str(context.test_split), "--output-root", str(context.evaluations_root/name), "--device", context.device] + (["--distance-bins", *map(str, bins)] if bins else [])
+    script = "scripts/evaluate_relation.py" if context.config["evaluation"].get("model_type", context.config["student"].get("model_type", "legacy_operator")) == "relation_l0" else "scripts/evaluate_sr.py"
+    return python(script) + ["--checkpoint", str(checkpoint), "--dataset-root", str(context.processed_root), "--split-file", str(context.test_split), "--output-root", str(context.evaluations_root/name), "--device", context.device] + (["--distance-bins", *map(str, bins)] if bins else [])
 
 def inference(context, checkpoint: Path, frame: Path, output: Path) -> list[str]:
     return python("scripts/infer.py") + ["--checkpoint", str(checkpoint), "--frame-root", str(frame), "--output", str(output), "--device", context.device]

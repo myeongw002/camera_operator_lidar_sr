@@ -78,10 +78,17 @@ def validate_csv_metrics(path: Path) -> None:
 
 def validate_inference(path: Path) -> None:
     values = np.load(path, allow_pickle=False)
-    required = ("range", "return_probability", "anchor_entropy", "residual")
+    relation = {"prior_weights", "final_weights", "correction"}
+    legacy = {"return_probability", "anchor_entropy", "residual"}
+    if relation <= set(values.files):
+        required = ("range", "prior_weights", "final_weights", "correction")
+        forbidden = legacy
+    else:
+        required = ("range", "return_probability", "anchor_entropy", "residual")
+        forbidden = relation
     if any(key not in values for key in required):
         raise ValueError(f"invalid inference keys: {path}")
-    shapes = [values[key].shape for key in required]
-    normalized = [tuple(dim for dim in shape if dim != 1) for shape in shapes]
-    if not shapes[0] or any(shape != normalized[0] for shape in normalized[1:]) or not all(np.isfinite(values[key]).all() for key in required):
+    if forbidden & set(values.files) or not all(np.isfinite(values[key]).all() for key in required):
         raise ValueError(f"invalid inference arrays: {path}")
+    if not values["range"].shape:
+        raise ValueError(f"invalid inference range: {path}")

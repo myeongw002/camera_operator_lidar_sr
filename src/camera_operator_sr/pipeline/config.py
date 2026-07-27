@@ -15,9 +15,9 @@ ALLOWED = {
     "dataset": {"type", "raw_root", "scan_root", "image_root", "calibration_root", "processed_root", "sequences", "camera_id", "range_width", "target_elevation_file", "auto_estimate_elevation", "input_row_indices", "max_frames_per_sequence"},
     "depth": {"enabled", "model", "device", "batch_size", "overwrite"},
     "splits": {"root", "train_file", "validation_file", "test_file", "generate", "allow_sequence_overlap"},
-    "student": {"enabled", "experiment_name", "epochs", "batch_size", "learning_rate", "weight_decay"},
+    "student": {"enabled", "model_type", "experiment_name", "epochs", "batch_size", "learning_rate", "weight_decay", "horizontal_radius", "point_hidden_dim", "relation_hidden_dim", "correction_limit", "correction_reg_weight", "use_intensity"},
     "distillation": {"enabled", "experiment_name", "teacher", "depth_mode", "advantage_mode", "epochs", "batch_size", "learning_rate"},
-    "evaluation": {"enabled", "evaluate_teachers", "evaluate_student", "evaluate_distilled", "distance_bins"},
+    "evaluation": {"enabled", "model_type", "evaluate_teachers", "evaluate_student", "evaluate_distilled", "distance_bins"},
     "inference": {"enabled", "max_frames", "checkpoint"},
     "stages": {"prepare_range_images", "precompute_depth", "create_splits", "train_student", "train_teachers", "evaluate_teachers", "train_distillation", "evaluate_sr", "inference"},
 }
@@ -73,6 +73,12 @@ def validate_config(config: dict) -> dict:
         raise ValueError("depth.batch_size must be 1: the selected depth backend is single-image")
     if config["student"].get("weight_decay", 0.0) < 0:
         raise ValueError("student.weight_decay must be non-negative")
+    if config["student"].get("model_type", "legacy_operator") not in {"legacy_operator", "relation_l0"}:
+        raise ValueError("student.model_type must be legacy_operator or relation_l0")
+    if config["evaluation"].get("model_type", config["student"].get("model_type", "legacy_operator")) not in {"legacy_operator", "relation_l0"}:
+        raise ValueError("evaluation.model_type must be legacy_operator or relation_l0")
+    if config["student"].get("model_type") == "relation_l0" and config["evaluation"].get("model_type", "relation_l0") != "relation_l0":
+        raise ValueError("relation_l0 student requires relation_l0 evaluation")
     selected_teacher = config["distillation"].get("teacher")
     if config["distillation"].get("enabled", True) and not config["teachers"][selected_teacher].get("enabled", False):
         raise ValueError("distillation.enabled requires its selected teacher to be enabled")

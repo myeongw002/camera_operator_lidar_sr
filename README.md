@@ -16,9 +16,19 @@ Inside the supplied container after `pip install -e .`:
 
 ```bash
 python -m pytest -q
-python scripts/prepare_range_images.py --scan-root /data/velodyne --output-root /data/processed/00 --target-elevation elevations.npy --input-row-indices 0,4,8,12,16,20,24,28,32,36,40,44,48,52,56,60
+python scripts/prepare_range_images.py --scan-root /data/velodyne --output-root /data/processed/00 --target-elevation elevations.npy --input-row-indices 0,4,8,13,17,21,25,29,34,38,42,46,50,55,59,63
 python scripts/train_student.py --dataset-root /data/processed --output-root outputs --experiment-name student_baseline --seed 42
 python scripts/infer.py --checkpoint outputs/student_baseline/seed_42/checkpoints/best.ckpt --frame-root /data/processed/00/000000 --output results/frame.npz
+```
+
+An L0-only run uses the same preparation contract, then trains and evaluates
+the relation checkpoint directly:
+
+```bash
+python scripts/prepare_range_images.py ... --input-row-indices 0,4,8,13,17,21,25,29,34,38,42,46,50,55,59,63
+python scripts/train_relation_l0.py --dataset-root /data/processed --output-root outputs --experiment-name relation_l0 --seed 42
+python scripts/evaluate_relation.py --checkpoint outputs/relation_l0/seed_42/checkpoints/best.ckpt --dataset-root /data/processed --split-file splits/test.txt --output-root outputs/relation_l0_eval --device cpu --distance-bins 0 10 20 40 inf
+python scripts/infer.py --checkpoint outputs/relation_l0/seed_42/checkpoints/best.ckpt --frame-root /data/processed/00/000000 --output results/relation_l0.npz
 ```
 
 ## Resumable experiments

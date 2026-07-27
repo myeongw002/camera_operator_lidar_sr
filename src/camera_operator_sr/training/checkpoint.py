@@ -128,6 +128,13 @@ def _checkpoint_geometry(checkpoint: dict) -> dict:
     if schema == CHECKPOINT_SCHEMA_VERSION:
         if geometry.get("candidate_layout") != "lower[-1,0,+1],upper[-1,0,+1]" or geometry.get("anchor_slots") != [1, 4]:
             raise ValueError("Relation checkpoint geometry metadata has incompatible candidate layout")
+        model_config = checkpoint.get("model_config", {})
+        if model_config.get("model_type") != "relation_l0":
+            raise ValueError("Schema-4 checkpoint must declare model_type relation_l0")
+        if int(model_config.get("horizontal_radius", -1)) != int(geometry["candidate_horizontal_radius"]):
+            raise ValueError("Relation checkpoint geometry horizontal radius disagrees with model_config")
+        if model_config.get("candidate_layout") != geometry["candidate_layout"] or model_config.get("anchor_slots") != geometry["anchor_slots"]:
+            raise ValueError("Relation checkpoint geometry candidate contract disagrees with model_config")
     return geometry
 
 

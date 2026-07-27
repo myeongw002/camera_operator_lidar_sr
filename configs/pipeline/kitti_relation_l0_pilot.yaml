@@ -1,0 +1,47 @@
+# L0-only pilot: camera/teacher/distillation stages are intentionally disabled.
+schema_version: 1
+pipeline:
+  name: kitti_relation_l0_pilot
+  output_root: /outputs/pipelines
+  seed: 42
+  device: cuda
+  deterministic: false
+  fail_fast: true
+  resume: false
+  overwrite: false
+  allow_device_fallback: false
+dataset:
+  type: kitti_odometry
+  scan_root: /data/data_odometry_velodyne
+  image_root: /data/data_odometry_color
+  calibration_root: /data/data_odometry_calib
+  processed_root: /outputs/pipelines
+  sequences: {train: ["01", "02"], validation: ["08"], test: ["00"]}
+  camera_id: 2
+  range_width: 2048
+  target_elevation_file: configs/kitti/hdl64_elevations.npy
+  auto_estimate_elevation: true
+  input_row_indices: [0, 4, 8, 13, 17, 21, 25, 29, 34, 38, 42, 46, 50, 55, 59, 63]
+  max_frames_per_sequence: 250
+depth: {enabled: false, model: depth-anything/Depth-Anything-V2-Small-hf, device: cpu, batch_size: 1, overwrite: false}
+splits: {root: outputs/pipelines/kitti_relation_l0_pilot/splits, train_file: train.txt, validation_file: validation.txt, test_file: test.txt, generate: true, allow_sequence_overlap: false}
+student:
+  enabled: true
+  model_type: relation_l0
+  experiment_name: relation_l0
+  epochs: 1
+  batch_size: 2
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  horizontal_radius: 1
+  point_hidden_dim: 24
+  relation_hidden_dim: 64
+  correction_limit: 3.0
+  correction_reg_weight: 0.001
+  use_intensity: true
+teachers:
+  correct: {enabled: false, experiment_name: teacher_correct, depth_mode: correct, epochs: 1, batch_size: 1, learning_rate: 0.0002}
+distillation: {enabled: false, experiment_name: distillation_disabled, teacher: correct, depth_mode: none, advantage_mode: soft, epochs: 1, batch_size: 1, learning_rate: 0.0001}
+evaluation: {enabled: true, model_type: relation_l0, evaluate_teachers: false, evaluate_student: true, evaluate_distilled: false, distance_bins: [0, 10, 20, 40, 60, 80, inf]}
+inference: {enabled: true, max_frames: 5, checkpoint: student}
+stages: {prepare_range_images: true, precompute_depth: false, create_splits: true, train_student: true, train_teachers: false, evaluate_teachers: false, train_distillation: false, evaluate_sr: true, inference: true}

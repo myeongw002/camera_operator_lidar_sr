@@ -211,6 +211,9 @@ class PipelineRunner:
     def _experiment_checkpoint(self, section: dict) -> Path:
         return self.context.experiments_root / section["experiment_name"] / f"seed_{self.context.config['pipeline']['seed']}" / "checkpoints" / "best.ckpt"
 
+    def _last_checkpoint(self, section: dict) -> Path:
+        return self.context.experiments_root / section["experiment_name"] / f"seed_{self.context.config['pipeline']['seed']}" / "checkpoints" / "last.ckpt"
+
     def _expected(self, stage_id: str) -> list[Path]:
         c = self.context
         if stage_id == "P01_dataset_validation": return [c.frame_manifest(sequence) for sequence in self._all_sequences()] + ([c.target_elevation_file] if c.target_elevation_file.exists() else [])
@@ -219,7 +222,7 @@ class PipelineRunner:
         if stage_id == "P03_precompute_depth":
             return [c.processed_root / sequence / name / file for sequence in self._all_sequences() for name in self._frame_names(sequence) for file in ("relative_depth.npy", "depth_valid.npy")]
         if stage_id == "P04_create_splits": return [c.train_split, c.validation_split, c.test_split]
-        if stage_id == "P05_train_student": return [self._experiment_checkpoint(c.config["student"])]
+        if stage_id == "P05_train_student": return [self._experiment_checkpoint(c.config["student"]), self._last_checkpoint(c.config["student"])]
         if stage_id == "P06_train_teacher_correct": return [self._experiment_checkpoint(c.config["teachers"]["correct"])]
         if stage_id == "P07_train_teacher_controls": return [self._experiment_checkpoint(value) for name, value in c.config["teachers"].items() if name != "correct" and value.get("enabled")]
         if stage_id == "P08_evaluate_teachers": return [c.evaluations_root/"teachers"/"teacher_comparison.csv", c.evaluations_root/"teachers"/"teacher_superiority.json"]
@@ -229,7 +232,9 @@ class PipelineRunner:
             evaluation = c.config["evaluation"]
             if evaluation.get("evaluate_student", True): names.append("student_baseline")
             if evaluation.get("evaluate_distilled", True): names.append(c.config["distillation"]["experiment_name"])
-            return [c.evaluations_root/name/file for name in names for file in ("summary.json", "region_metrics.csv", "beam_metrics.csv", "distance_metrics.csv", "operator_metrics.csv")]
+            relation = c.config["evaluation"].get("model_type", c.config["student"].get("model_type", "legacy_operator")) == "relation_l0"
+            files = ("summary.json", "region_metrics.csv", "beam_metrics.csv", "distance_metrics.csv", "relation_metrics.csv") if relation else ("summary.json", "region_metrics.csv", "beam_metrics.csv", "distance_metrics.csv", "operator_metrics.csv")
+            return [c.evaluations_root/name/file for name in names for file in files]
         if stage_id == "P11_inference":
             choice = c.config["inference"].get("checkpoint", "distillation")
             return [c.root / "inference" / choice / Path(entry).parent.name / f"{Path(entry).name}.npz" for entry in c.test_entries[:int(c.config["inference"].get("max_frames", 1))]]
@@ -313,7 +318,7 @@ class PipelineRunner:
             __import__("PIL")
         if self.context.config["depth"].get("enabled"):
             __import__("transformers")
-        for script in ("prepare_range_images.py", "precompute_relative_depth.py", "train_student.py", "train_teacher.py", "train_distill.py", "evaluate_sr.py", "evaluate_teacher.py", "infer.py"):
+        for script in ("prepare_range_images.py", "precompute_relative_depth.py", "train_student.py", "train_relation_l0.py", "train_teacher.py", "train_distill.py", "evaluate_sr.py", "evaluate_relation.py", "evaluate_teacher.py", "infer.py"):
             if not (Path("scripts") / script).exists(): raise FileNotFoundError(Path("scripts") / script)
         if not self.skip_path_validation and not self.context.processed_root.exists() and self.context.config["dataset"]["type"] == "processed_synthetic": raise FileNotFoundError(self.context.processed_root)
         self.context.root.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,6 @@
 import torch
 
+from camera_operator_sr.geometry.candidate_graph import build_candidate_index
 from camera_operator_sr.models.relation import GeometricBaselineModel, VerticalLinearPrior
 from camera_operator_sr.training.modules import generated_mask_for
 
@@ -46,6 +47,21 @@ def test_geometric_baseline_all_invalid_anchors_are_zero():
             "elevation": torch.tensor([-1.0, 1.0]), "azimuth": torch.tensor([-1.0, 1.0]),
         },
         "target": {"elevation": torch.tensor([0.0])},
+    }
+    output = GeometricBaselineModel()(batch)
+    assert not output.has_anchor.any()
+    assert torch.count_nonzero(output.predicted_range) == 0
+
+
+def test_out_of_fov_target_has_no_geometric_or_model_anchor():
+    index = build_candidate_index(torch.tensor([-1.0, 1.0]), torch.tensor([2.0]), width=4)
+    assert not index.geometric_valid.any()
+    batch = {
+        "lidar": {
+            "range": torch.ones(1, 1, 2, 4), "valid": torch.ones(1, 1, 2, 4, dtype=torch.bool),
+            "elevation": torch.tensor([-1.0, 1.0]), "azimuth": torch.linspace(-1.0, 1.0, 4),
+        },
+        "target": {"elevation": torch.tensor([2.0])},
     }
     output = GeometricBaselineModel()(batch)
     assert not output.has_anchor.any()

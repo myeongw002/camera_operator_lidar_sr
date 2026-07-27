@@ -20,6 +20,9 @@ class CandidateIndex:
     geometric_valid: Tensor   # [H_target, K]
     delta_elevation: Tensor   # [H_target, K]
     delta_azimuth: Tensor     # [K]
+    lower_center_slot: int
+    upper_center_slot: int
+    query_fraction: Tensor    # [H_target], 0 at lower beam and 1 at upper beam
 
     @property
     def candidate_count(self) -> int:
@@ -39,7 +42,22 @@ def build_candidate_index(input_elevation: Tensor, target_elevation: Tensor, wid
     geometric_valid[:, offsets.numel():] &= ~duplicate
     delta_elevation = input_elevation[rows] - target_elevation[:, None]
     delta_azimuth = column_offsets.to(dtype=input_elevation.dtype) * (2 * torch.pi / width)
-    return CandidateIndex(rows.long(), column_offsets.long(), geometric_valid, delta_elevation, delta_azimuth)
+    lower_elevation, upper_elevation = input_elevation[lower], input_elevation[upper]
+    elevation_span = upper_elevation - lower_elevation
+    # ``lower`` and ``upper`` are ordered by physical elevation, even when the
+    # input range image stores rows in descending elevation order.  Exact
+    # observed rows use one source (lower == upper), hence their fraction is 0.
+    query_fraction = torch.where(
+        elevation_span.abs().gt(torch.finfo(input_elevation.dtype).eps),
+        (target_elevation - lower_elevation).div(elevation_span).clamp(0.0, 1.0),
+        torch.zeros_like(target_elevation),
+    )
+    lower_center_slot = horizontal_radius
+    upper_center_slot = 3 * horizontal_radius + 1
+    return CandidateIndex(
+        rows.long(), column_offsets.long(), geometric_valid, delta_elevation,
+        delta_azimuth, lower_center_slot, upper_center_slot, query_fraction,
+    )
 
 
 def gather_candidate_values(values: Tensor, candidate_index: CandidateIndex) -> Tensor:

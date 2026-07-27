@@ -18,18 +18,19 @@ class LocalCandidateContext:
 
 
 def robust_normalized_log_range(ranges: Tensor, valid: Tensor, *, eps: float = 1e-6, clamp: float = 5.0) -> Tensor:
-    """Median/MAD-normalize valid candidate ranges with finite all-invalid output."""
+    """Median/MAD-normalize valid ranges, averaging the two middle values for even counts."""
     if ranges.shape != valid.shape:
         raise ValueError("ranges and valid must have the same shape")
     log_ranges = torch.log(ranges.clamp_min(eps))
     finite_log = torch.nan_to_num(log_ranges, nan=0.0, posinf=0.0, neginf=0.0)
     count = valid.sum(dim=-1, keepdim=True)
     ordered = finite_log.masked_fill(~valid.bool(), float("inf")).sort(dim=-1).values
-    median_index = ((count - 1).clamp_min(0) // 2).long()
-    median = ordered.gather(-1, median_index).masked_fill(count.eq(0), 0.0)
+    lower_index = ((count - 1).clamp_min(0) // 2).long()
+    upper_index = (count.clamp_min(1) // 2).long()
+    median = .5 * (ordered.gather(-1, lower_index) + ordered.gather(-1, upper_index)).masked_fill(count.eq(0), 0.0)
     deviation = (finite_log - median).abs()
     ordered_deviation = deviation.masked_fill(~valid.bool(), float("inf")).sort(dim=-1).values
-    mad = ordered_deviation.gather(-1, median_index).masked_fill(count.eq(0), 0.0)
+    mad = (.5 * (ordered_deviation.gather(-1, lower_index) + ordered_deviation.gather(-1, upper_index))).masked_fill(count.eq(0), 0.0)
     normalized = (finite_log - median) / (mad + eps)
     return torch.where(valid.bool(), normalized.clamp(-clamp, clamp), torch.zeros_like(normalized))
 

@@ -64,7 +64,9 @@ def main() -> None:
     for epoch in range(start, args.epochs):
         model.train(); total = 0.0
         for batch in loader:
-            losses = relation_supervised_loss(model(move(batch, args.device)), move(batch, args.device), correction_reg_weight=args.correction_reg_weight)
+            batch = move(batch, args.device)
+            output = model(batch)
+            losses = relation_supervised_loss(output, batch, correction_reg_weight=args.correction_reg_weight)
             optimizer.zero_grad(set_to_none=True); losses["loss"].backward(); optimizer.step(); step += 1; total += float(losses["loss"].detach())
         score = count = None; is_best = False
         if validation_loader:

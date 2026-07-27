@@ -12,12 +12,11 @@ def batch(valid=True):
 
 def test_l0_output_and_b0_support_match_and_zero_correction_equivalence():
     value = batch(); l0, b0 = RelationLidarModel(), GeometricBaselineModel()
-    with torch.no_grad():
-        for parameter in l0.relation_head.parameters(): parameter.zero_()
     output, prior = l0(value), b0(value)
     assert output.predicted_range.shape == (1, 1, 3, 4)
     assert output.relation_feature.shape[-1] == l0.aggregator.relation_dim
     assert torch.equal(output.has_anchor, prior.has_anchor)
+    assert torch.count_nonzero(output.correction) == 0
     assert torch.allclose(output.predicted_range, prior.predicted_range)
     assert torch.isfinite(output.predicted_range).all()
 

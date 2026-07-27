@@ -3,6 +3,7 @@
 import argparse
 import json
 import math
+import os
 from dataclasses import asdict
 from pathlib import Path
 
@@ -83,9 +84,12 @@ def main():
     validation_loader = DataLoader(validation, batch_size=args.batch_size, collate_fn=collate_frames) if validation else None
     for epoch in range(start, args.epochs):
         model.train(); total = 0.0; batch_count, report_every = len(loader), max(1, len(loader) // 10)
+        debug = os.environ.get("CAMERA_OPERATOR_SR_DEBUG") == "1"
         print(f"[teacher:{args.depth_mode}] epoch {epoch + 1}/{args.epochs}: frames={len(dataset)} batches={batch_count}", flush=True)
         for batch_index, batch in enumerate(loader, start=1):
+            if debug: print(f"[debug:teacher:{args.depth_mode}] epoch {epoch + 1}/{args.epochs} batch {batch_index}/{batch_count}: forward_start", flush=True)
             loss = module(_move(batch, args.device)); optimizer.zero_grad(set_to_none=True); loss["loss"].backward(); optimizer.step(); step += 1; total += float(loss["loss"].detach())
+            if debug: print(f"[debug:teacher:{args.depth_mode}] epoch {epoch + 1}/{args.epochs} batch {batch_index}/{batch_count}: backward_optimizer_done", flush=True)
             if batch_index == batch_count or batch_index % report_every == 0:
                 print(f"[teacher:{args.depth_mode}] epoch {epoch + 1}/{args.epochs} batch {batch_index}/{batch_count} loss={float(loss['loss'].detach()):.6f}", flush=True)
         score = count = None; is_best = False

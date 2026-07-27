@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Precompute raw relative inverse depth using a fixed Hugging Face depth model."""
 import argparse
+import os
+import time
 from pathlib import Path
 
 import numpy as np
@@ -44,9 +46,18 @@ def main() -> None:
         return
     from transformers import pipeline
     estimator = pipeline("depth-estimation", model=args.model, device=args.device)
+    debug = os.environ.get("CAMERA_OPERATOR_SR_DEBUG") == "1"
     for index, image_path in enumerate(pending, start=1):
+        frame_started = time.perf_counter()
+        print(f"[depth] frame {index}/{len(pending)}: {image_path.stem} START", flush=True)
+        if debug: print(f"[debug:depth] frame {index}/{len(pending)} {image_path.stem}: image_load_start", flush=True)
         image = Image.open(image_path).convert("RGB")
+        if debug: print(f"[debug:depth] frame {index}/{len(pending)} {image_path.stem}: image_loaded size={image.width}x{image.height}", flush=True)
+        inference_started = time.perf_counter()
+        if debug: print(f"[debug:depth] frame {index}/{len(pending)} {image_path.stem}: inference_start", flush=True)
         result = estimator(image)
+        print(f"[depth] frame {index}/{len(pending)}: {image_path.stem} inference_done elapsed={time.perf_counter() - inference_started:.2f}s", flush=True)
+        if debug: print(f"[debug:depth] frame {index}/{len(pending)} {image_path.stem}: postprocess_start", flush=True)
         predicted = result["predicted_depth"]
         depth = predicted.detach().float() if isinstance(predicted, torch.Tensor) else torch.as_tensor(np.asarray(predicted), dtype=torch.float32)
         if depth.ndim == 3:
@@ -56,8 +67,10 @@ def main() -> None:
             depth = depth.reciprocal()
         depth_np = depth.cpu().numpy()
         valid = np.isfinite(depth_np) & (depth_np > 0)
+        if debug: print(f"[debug:depth] frame {index}/{len(pending)} {image_path.stem}: postprocess_done valid={int(valid.sum())}/{valid.size}", flush=True)
         target = args.output_root / image_path.stem
         target.mkdir(parents=True, exist_ok=True)
+        if debug: print(f"[debug:depth] frame {index}/{len(pending)} {image_path.stem}: save_start target={target}", flush=True)
         # Inverse depth can be finite in float32 yet exceed float16's maximum
         # (65,504).  Saving it as float16 silently turns valid pixels into inf,
         # which later corrupts teacher input.  Preserve the model result in
@@ -65,7 +78,7 @@ def main() -> None:
         np.save(target / "relative_depth.npy", np.where(valid, depth_np, 0).astype(np.float32))
         np.save(target / "depth_valid.npy", valid.astype(np.uint8))
         np.savez_compressed(target / "depth_meta.npz", model_name=args.model, input_resolution=np.asarray([image.height, image.width]), output_type="relative_inverse_depth")
-        print(f"[depth] frame {index}/{len(pending)}: {image_path.stem}", flush=True)
+        print(f"[depth] frame {index}/{len(pending)}: {image_path.stem} saved total={time.perf_counter() - frame_started:.2f}s", flush=True)
 
 
 if __name__ == "__main__":

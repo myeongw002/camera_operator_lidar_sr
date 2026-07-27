@@ -3,6 +3,7 @@
 import argparse
 import json
 import math
+import os
 from dataclasses import asdict
 from pathlib import Path
 
@@ -103,10 +104,13 @@ def main():
     for epoch in range(start, args.epochs):
         model.train(); total = 0.0
         batch_count, report_every = len(loader), max(1, len(loader) // 10)
+        debug = os.environ.get("CAMERA_OPERATOR_SR_DEBUG") == "1"
         print(f"[student] epoch {epoch + 1}/{args.epochs}: frames={len(dataset)} batches={batch_count}", flush=True)
         for batch_index, batch in enumerate(loader, start=1):
+            if debug: print(f"[debug:student] epoch {epoch + 1}/{args.epochs} batch {batch_index}/{batch_count}: forward_start", flush=True)
             losses = module(_move(batch, args.device))
             optimizer.zero_grad(set_to_none=True); losses["loss"].backward(); optimizer.step()
+            if debug: print(f"[debug:student] epoch {epoch + 1}/{args.epochs} batch {batch_index}/{batch_count}: backward_optimizer_done", flush=True)
             step += 1; total += float(losses["loss"].detach())
             if batch_index == batch_count or batch_index % report_every == 0:
                 print(f"[student] epoch {epoch + 1}/{args.epochs} batch {batch_index}/{batch_count} loss={float(losses['loss'].detach()):.6f}", flush=True)

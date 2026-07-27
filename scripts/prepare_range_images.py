@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Convert KITTI-style float32 x/y/z/intensity scans to synthetic 16/64 ranges."""
 import argparse
+import os
 from pathlib import Path
 
 import numpy as np
@@ -38,7 +39,9 @@ def main() -> None:
     if not scans:
         raise ValueError("no selected scans found")
     print(f"[prepare] selected frames: {len(scans)}", flush=True)
+    debug = os.environ.get("CAMERA_OPERATOR_SR_DEBUG") == "1"
     for index, scan_path in enumerate(scans, start=1):
+        if debug: print(f"[debug:prepare] frame {index}/{len(scans)} {scan_path.stem}: START", flush=True)
         if args.calibration_root is None:
             K, T, image_size = np.eye(3, dtype=np.float32), np.eye(4, dtype=np.float32), (0, 0)
         else:
@@ -48,6 +51,7 @@ def main() -> None:
                 raise FileNotFoundError(f"no calibration for {scan_path}: expected {per_frame} or {calibration_path}")
             calibration = load_kitti_calibration(calibration_path, args.camera_id)
             K, T, image_size = calibration.K, calibration.T_cam_lidar, calibration.image_size
+        if debug: print(f"[debug:prepare] frame {index}/{len(scans)} {scan_path.stem}: calibration_ready", flush=True)
         if args.image_root is not None:
             image_path = next((path for path in (args.image_root / f"{scan_path.stem}.png", args.image_root / f"{scan_path.stem}.jpg") if path.exists()), None)
             if image_path is None:
@@ -56,7 +60,9 @@ def main() -> None:
             with Image.open(image_path) as image:
                 image_size = (image.height, image.width)
         raw = np.fromfile(scan_path, dtype=np.float32).reshape(-1, 4)
+        if debug: print(f"[debug:prepare] frame {index}/{len(scans)} {scan_path.stem}: points={len(raw)} range_projection_start", flush=True)
         image = pointcloud_to_range_image(torch.from_numpy(raw[:, :3]), torch.from_numpy(raw[:, 3]), elevation, args.width, row_tolerance=args.row_tolerance)
+        if debug: print(f"[debug:prepare] frame {index}/{len(scans)} {scan_path.stem}: range_projection_done valid={int(image.valid.sum())}", flush=True)
         frame = args.output_root / scan_path.stem
         frame.mkdir(parents=True, exist_ok=True)
         np.save(frame / "target_range.npy", image.range.squeeze(0).numpy())

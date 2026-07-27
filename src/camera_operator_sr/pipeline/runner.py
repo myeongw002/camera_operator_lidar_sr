@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -98,6 +99,10 @@ class PipelineRunner:
         self.disabled = self._disabled_stages()
         self.invalidated = set().union(*(downstream(stage) | {stage} for stage in self.force_stages)) if self.force_stages else set()
 
+    @staticmethod
+    def _debug(stage: str, message: str) -> None:
+        print(f"[debug:{stage}] {message}", flush=True)
+
     def _disabled_stages(self) -> set[str]:
         stage = self.context.config["stages"]
         disabled = set()
@@ -140,25 +145,27 @@ class PipelineRunner:
     def _run_command(self, stage_id: str, command: list[str]) -> int:
         root = self.context.root; (root / "commands").mkdir(parents=True, exist_ok=True); (root / "logs").mkdir(parents=True, exist_ok=True)
         write_json_atomic(root / "commands" / f"{stage_id}.json", {"command": command, "created_at_utc": now()})
-        environment = dict(os.environ); environment["PYTHONPATH"] = "src" + (":" + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else ""); environment["PYTHONUNBUFFERED"] = "1"
-        print(f"{stage_id}: {' '.join(command)}", flush=True)
+        environment = dict(os.environ); environment["PYTHONPATH"] = "src" + (":" + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else ""); environment["PYTHONUNBUFFERED"] = "1"; environment.setdefault("CAMERA_OPERATOR_SR_DEBUG", "1"); environment.setdefault("PYTHONFAULTHANDLER", "1"); environment.setdefault("TORCH_SHOW_CPP_STACKTRACES", "1")
+        print(f"{stage_id}: LAUNCH {' '.join(command)}", flush=True)
         with (root / "logs" / f"{stage_id}.stdout.log").open("w") as stdout, (root / "logs" / f"{stage_id}.stderr.log").open("w") as stderr:
             # A process group contains model-download helpers and other
             # grandchildren as well as the script itself.  It is terminated as
             # one unit on Ctrl+C, docker stop (SIGTERM), or runner interruption.
             process = subprocess.Popen(command, cwd=".", env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1, start_new_session=True)
             self._active_process, self._active_stage = process, stage_id
+            counts = {"stdout": 0, "stderr": 0}
 
-            def relay(pipe, log, terminal) -> None:
+            def relay(pipe, log, terminal, stream_name: str) -> None:
                 assert pipe is not None
                 for line in iter(pipe.readline, ""):
+                    counts[stream_name] += len(line)
                     log.write(line); log.flush()
                     terminal.write(line); terminal.flush()
                 pipe.close()
 
             workers = [
-                threading.Thread(target=relay, args=(process.stdout, stdout, sys.stdout), daemon=True),
-                threading.Thread(target=relay, args=(process.stderr, stderr, sys.stderr), daemon=True),
+                threading.Thread(target=relay, args=(process.stdout, stdout, sys.stdout, "stdout"), daemon=True),
+                threading.Thread(target=relay, args=(process.stderr, stderr, sys.stderr, "stderr"), daemon=True),
             ]
             for worker in workers: worker.start()
             previous = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
@@ -170,8 +177,9 @@ class PipelineRunner:
                 raise KeyboardInterrupt
 
             for number in previous: signal.signal(number, interrupt)
+            code: int | None = None
             try:
-                return process.wait()
+                code = process.wait()
             except KeyboardInterrupt:
                 self._terminate_process_group(process)
                 try: process.wait(timeout=10)
@@ -182,6 +190,15 @@ class PipelineRunner:
                 for number, handler in previous.items(): signal.signal(number, handler)
                 for worker in workers: worker.join()
                 self._active_process, self._active_stage = None, None
+            assert code is not None
+            if code == 0:
+                print(f"{stage_id}: EXIT code=0 stdout_bytes={counts['stdout']} stderr_bytes={counts['stderr']}", flush=True)
+            else:
+                reason = f"signal={signal.Signals(-code).name}" if code < 0 else f"code={code}"
+                print(f"{stage_id}: EXIT {reason} stdout_bytes={counts['stdout']} stderr_bytes={counts['stderr']}", file=sys.stderr, flush=True)
+                if counts["stderr"] == 0:
+                    print(f"{stage_id}: child produced no stderr; SIGKILL commonly indicates container/host OOM or an external kill. Inspect Docker OOM state and host kernel logs.", file=sys.stderr, flush=True)
+            return code
 
     @staticmethod
     def _terminate_process_group(process: subprocess.Popen, *, force: bool = False) -> None:
@@ -261,6 +278,7 @@ class PipelineRunner:
             if not entries: raise ValueError(f"split {group} has no processed frames")
             path.write_text("\n".join(entries) + "\n")
             setattr(c, f"{group if group != 'validation' else 'validation'}_entries", entries)
+            self._debug("P04", f"split={group} entries={len(entries)} path={path}")
         c.train_entries = c.train_split.read_text().splitlines(); c.validation_entries = c.validation_split.read_text().splitlines(); c.test_entries = c.test_split.read_text().splitlines()
 
     def _write_frame_manifests(self) -> None:
@@ -283,6 +301,7 @@ class PipelineRunner:
             c.frame_manifest(sequence).write_text("\n".join(stems) + "\n")
 
     def _preflight(self) -> None:
+        self._debug("P00", f"python={sys.version.split()[0]} requested_device={self.context.device} dataset_type={self.context.config['dataset']['type']}")
         if sys.version_info < (3, 10): raise RuntimeError("pipeline requires Python 3.10+")
         if self.context.device.startswith("cuda") and not torch.cuda.is_available():
             if self.context.config["pipeline"].get("allow_device_fallback"): self.context.device = "cpu"
@@ -299,12 +318,15 @@ class PipelineRunner:
         if not self.skip_path_validation and not self.context.processed_root.exists() and self.context.config["dataset"]["type"] == "processed_synthetic": raise FileNotFoundError(self.context.processed_root)
         self.context.root.mkdir(parents=True, exist_ok=True)
         probe = self.context.root / ".write_probe"; probe.write_text("ok"); probe.unlink()
+        self._debug("P00", f"active_device={self.context.device} cuda_available={torch.cuda.is_available()} output_root={self.context.root}")
 
     def _dataset_validation(self) -> None:
+        self._debug("P01", f"dataset_type={self.context.config['dataset']['type']} processed_root={self.context.processed_root}")
         if self.context.config["dataset"]["type"] == "synthetic": self._create_synthetic_dataset()
         if self.context.config["dataset"]["type"] in {"processed_synthetic", "synthetic"}:
             if not any(self.context.processed_root.glob("*/*/meta.npz")): raise FileNotFoundError("processed dataset has no meta.npz frames")
             self._write_frame_manifests()
+            self._debug("P01", f"processed frames validated; manifests={self.context.frame_manifests_root}")
             return
         data = self.context.config["dataset"]
         elevation_path = self.context.target_elevation_file
@@ -324,6 +346,7 @@ class PipelineRunner:
             elevation_path = output
         elevation = np.load(elevation_path)
         if elevation.shape != (64,) or not np.isfinite(elevation).all() or np.max(np.abs(elevation)) > np.pi / 2 or np.any(np.diff(elevation) == 0): raise ValueError("target elevation must be finite ordered radians shape [64]")
+        self._debug("P01", f"elevation={elevation_path} min={float(elevation.min()):.6f} max={float(elevation.max()):.6f}")
         from camera_operator_sr.data.kitti_calibration import load_kitti_calibration
         for sequence in self._all_sequences():
             scan_dir, image_dir, calibration_path = self.context.scan_directory(sequence), self.context.image_directory(sequence), self.context.calibration_file(sequence)
@@ -331,10 +354,12 @@ class PipelineRunner:
                 if not path.exists(): raise FileNotFoundError(path)
             lidar = {path.stem for path in scan_dir.glob("*.bin")}
             images = {path.stem for extension in ("*.png", "*.jpg", "*.jpeg") for path in image_dir.glob(extension)}
+            self._debug("P01", f"sequence={sequence} scans={len(lidar)} images={len(images)} common={len(lidar & images)}")
             if not lidar or not images or not (lidar & images): raise ValueError(f"sequence {sequence} has no common LiDAR/image frame stems")
             calibration = load_kitti_calibration(calibration_path, data.get("camera_id", 2))
             if not np.isfinite(calibration.K).all() or not np.isfinite(calibration.T_cam_lidar).all() or abs(np.linalg.det(calibration.T_cam_lidar[:3, :3])) < 1e-6: raise ValueError(f"invalid calibration: {calibration_path}")
         self._write_frame_manifests()
+        self._debug("P01", f"frame manifests written: {self.context.frame_manifests_root}")
 
     def _create_synthetic_dataset(self) -> None:
         """Create the tiny, deterministic processed dataset used by the shipped pilot config."""
@@ -391,30 +416,37 @@ class PipelineRunner:
         if stage_id == "P01_dataset_validation": self._dataset_validation(); return
         if stage_id == "P02_prepare_range_images":
             for sequence in sum((list(values) for values in c.config["dataset"]["sequences"].values()), []):
+                self._debug("P02", f"sequence={sequence} selected_frames={len(self._frame_names(sequence))} output={c.processed_root / sequence}")
                 if self._run_command(stage_id + "_" + sequence, commands.prepare(c, sequence)): raise RuntimeError("range preprocessing failed")
             return
         if stage_id == "P03_precompute_depth":
             if not c.config["depth"].get("enabled"): return
             for sequence in sum((list(values) for values in c.config["dataset"]["sequences"].values()), []):
+                self._debug("P03", f"sequence={sequence} selected_frames={len(self._frame_names(sequence))} model={c.config['depth']['model']} device={c.config['depth']['device']}")
                 if self._run_command(stage_id + "_" + sequence, commands.depth(c, sequence, force=stage_id in self.force_stages)): raise RuntimeError("depth preprocessing failed")
             return
         if stage_id == "P04_create_splits": self._create_splits(); return
         if stage_id == "P05_train_student":
+            self._debug("P05", f"experiment={c.config['student']['experiment_name']} train_split={c.train_split} validation_split={c.validation_split}")
             if self._run_command(stage_id, commands.student(c, self._recover_training_mode(stage_id))): raise RuntimeError("student training failed")
             c.artifacts["student_best_checkpoint"] = self._experiment_checkpoint(c.config["student"]); return
         if stage_id == "P06_train_teacher_correct":
+            self._debug("P06", f"baseline={c.artifacts.get('student_best_checkpoint')} depth_mode=correct")
             if self._run_command(stage_id, commands.teacher(c, "correct", self._recover_training_mode(stage_id))): raise RuntimeError("teacher correct training failed")
             c.artifacts["teacher_checkpoints"]["correct"] = self._experiment_checkpoint(c.config["teachers"]["correct"]); return
         if stage_id == "P07_train_teacher_controls":
             for name, settings in c.config["teachers"].items():
                 if name != "correct" and settings.get("enabled"):
+                    self._debug("P07", f"control={name} baseline={c.artifacts.get('student_best_checkpoint')}")
                     if self._run_command(stage_id + "_" + name, commands.teacher(c, name, self._recover_training_mode(stage_id))): raise RuntimeError(f"teacher {name} training failed")
                     c.artifacts["teacher_checkpoints"][name] = self._experiment_checkpoint(settings)
             return
         if stage_id == "P08_evaluate_teachers":
+            self._debug("P08", f"teacher_checkpoints={c.artifacts.get('teacher_checkpoints', {})}")
             if self._run_command(stage_id, commands.teacher_evaluation(c)): raise RuntimeError("teacher evaluation failed")
             return
         if stage_id == "P09_train_distillation":
+            self._debug("P09", f"baseline={c.artifacts.get('student_best_checkpoint')} teacher={c.artifacts.get('teacher_checkpoints', {}).get(c.config['distillation']['teacher'])}")
             if self._run_command(stage_id, commands.distillation(c, self._recover_training_mode(stage_id))): raise RuntimeError("distillation training failed")
             c.artifacts["distillation_best_checkpoint"] = self._experiment_checkpoint(c.config["distillation"]); return
         if stage_id == "P10_evaluate_sr":
@@ -422,6 +454,7 @@ class PipelineRunner:
             if c.config["evaluation"].get("evaluate_student", True): targets.append((c.artifacts["student_best_checkpoint"], "student_baseline"))
             if c.config["evaluation"].get("evaluate_distilled", True): targets.append((c.artifacts["distillation_best_checkpoint"], c.config["distillation"]["experiment_name"]))
             for checkpoint, name in targets:
+                self._debug("P10", f"evaluation={name} checkpoint={checkpoint} split={c.test_split}")
                 if self._run_command(stage_id + "_" + name, commands.sr_evaluation(c, checkpoint, name)): raise RuntimeError("SR evaluation failed")
             return
         if stage_id == "P11_inference":
@@ -434,7 +467,7 @@ class PipelineRunner:
                 print(f"[P11_inference] frame {index}/{len(frames)}: {frame.parent.name}/{frame.name}", flush=True)
                 if self._run_command(stage_id + "_" + frame.name, commands.inference(c, checkpoint, frame, output)): raise RuntimeError("inference failed")
             return
-        if stage_id == "P12_summary": build_summary(c, self.state.value); return
+        if stage_id == "P12_summary": self._debug("P12", f"summary_root={c.summary_root}"); build_summary(c, self.state.value); return
 
     def _hydrate_artifacts(self) -> None:
         c = self.context
@@ -536,7 +569,9 @@ class PipelineRunner:
                 message = f"{stage}: FAILED: {error}"
                 print(message, file=sys.stderr, flush=True)
                 logs = self.context.root / "logs"; logs.mkdir(parents=True, exist_ok=True)
-                with (logs / f"{stage}.stderr.log").open("a") as handle: handle.write(message + "\n")
+                details = traceback.format_exc()
+                print(details, file=sys.stderr, end="", flush=True)
+                with (logs / f"{stage}.stderr.log").open("a") as handle: handle.write(message + "\n" + details)
                 self.state.update(stage, "FAILED", error=str(error), return_code=1); self._record_event({"stage": stage, "status": "FAILED", "error": str(error), "time": now()}); failed = True
                 if self.context.config["pipeline"].get("fail_fast", True):
                     for later_index, later in enumerate(selected[index:], start=index + 1):

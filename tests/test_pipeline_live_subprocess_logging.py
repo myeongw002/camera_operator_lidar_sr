@@ -14,3 +14,11 @@ def test_subprocess_stdout_and_stderr_are_teed_to_terminal_and_logs(tmp_path, ca
     logs = runner.context.root / "logs"
     assert "stage standard output" in (logs / "P99_test.stdout.log").read_text()
     assert "stage standard error" in (logs / "P99_test.stderr.log").read_text()
+
+
+def test_silent_child_failure_reports_exit_code_and_empty_stderr(tmp_path, capsys):
+    config = synthetic_config(tmp_path); path = write_config(tmp_path, config)
+    runner = PipelineRunner(config, path)
+    assert runner._run_command("P99_silent", [sys.executable, "-c", "raise SystemExit(17)"]) == 17
+    error = capsys.readouterr().err
+    assert "P99_silent: EXIT code=17" in error and "child produced no stderr" in error

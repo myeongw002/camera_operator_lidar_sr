@@ -17,5 +17,6 @@ def test_failed_stage_blocks_downstream_writes_summary_and_reports_terminal_erro
     assert state["status"] == "FAILED" and state["stages"]["P05_train_student"]["status"] == "FAILED"
     assert state["stages"]["P06_train_teacher_correct"]["status"] == "BLOCKED"
     assert (runner.context.summary_root/"pipeline_summary.json").exists()
-    assert "P05_train_student: FAILED: intentional failure" in capsys.readouterr().err
+    terminal_error = capsys.readouterr().err
+    assert "P05_train_student: FAILED: intentional failure" in terminal_error and "Traceback" in terminal_error
     assert "intentional failure" in (runner.context.root / "logs" / "P05_train_student.stderr.log").read_text()

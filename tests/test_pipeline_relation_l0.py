@@ -1,16 +1,21 @@
 from camera_operator_sr.pipeline import commands
-from camera_operator_sr.pipeline.config import validate_config
+from camera_operator_sr.pipeline.config import load_config, validate_config
 from camera_operator_sr.pipeline.runner import PipelineContext, PipelineRunner
 from pipeline_support import synthetic_config, write_config
 
 
-def test_relation_l0_pipeline_dry_run_uses_only_l0_commands_and_artifacts(tmp_path):
-    config = synthetic_config(tmp_path)
+def configure_l0_only(config):
     config["student"].update(model_type="relation_l0", experiment_name="relation_l0")
-    config["teachers"]["correct"]["enabled"] = False
+    for teacher in config["teachers"].values():
+        teacher["enabled"] = False
     config["distillation"]["enabled"] = False
     config["evaluation"].update(model_type="relation_l0", evaluate_teachers=False, evaluate_student=True, evaluate_distilled=False)
     config["inference"]["checkpoint"] = "student"
+
+
+def test_relation_l0_pipeline_dry_run_uses_only_l0_commands_and_artifacts(tmp_path):
+    config = synthetic_config(tmp_path)
+    configure_l0_only(config)
     config["stages"].update(precompute_depth=False, train_teachers=False, evaluate_teachers=False, train_distillation=False)
     config = validate_config(config)
     path = write_config(tmp_path, config)
@@ -26,11 +31,8 @@ def test_relation_l0_pipeline_dry_run_uses_only_l0_commands_and_artifacts(tmp_pa
 
 def test_relation_l0_synthetic_pipeline_runs_train_evaluate_and_infer(tmp_path):
     config = synthetic_config(tmp_path)
-    config["student"].update(model_type="relation_l0", experiment_name="relation_l0")
-    config["teachers"]["correct"]["enabled"] = False
-    config["distillation"]["enabled"] = False
-    config["evaluation"].update(model_type="relation_l0", evaluate_teachers=False, evaluate_student=True, evaluate_distilled=False)
-    config["inference"].update(checkpoint="student", max_frames=1)
+    configure_l0_only(config)
+    config["inference"]["max_frames"] = 1
     config["stages"].update(precompute_depth=False, train_teachers=False, evaluate_teachers=False, train_distillation=False)
     config = validate_config(config)
     path = write_config(tmp_path, config)
@@ -40,3 +42,24 @@ def test_relation_l0_synthetic_pipeline_runs_train_evaluate_and_infer(tmp_path):
     assert (root / "experiments" / "relation_l0" / "seed_17" / "checkpoints" / "last.ckpt").exists()
     assert (root / "evaluations" / "student_baseline" / "relation_metrics.csv").exists()
     assert list((root / "inference" / "student" / "00").glob("*.npz"))
+
+
+def test_relation_l0_config_rejects_non_l0_only_combinations_and_accepts_pilot(tmp_path):
+    assert load_config("configs/pipeline/kitti_relation_l0_pilot.yaml")["student"]["model_type"] == "relation_l0"
+    changes = (
+        ("teacher", lambda config: config["teachers"]["correct"].update(enabled=True), "teachers must be disabled"),
+        ("distillation", lambda config: config["distillation"].update(enabled=True), "distillation is not implemented"),
+        ("teacher evaluation", lambda config: config["evaluation"].update(evaluate_teachers=True), "evaluate_teachers"),
+        ("distilled evaluation", lambda config: config["evaluation"].update(evaluate_distilled=True), "distillation is not implemented"),
+        ("inference", lambda config: config["inference"].update(checkpoint="distillation"), "inference.checkpoint=student"),
+    )
+    for _, change, message in changes:
+        config = synthetic_config(tmp_path)
+        configure_l0_only(config)
+        change(config)
+        try:
+            validate_config(config)
+        except ValueError as error:
+            assert message in str(error)
+        else:
+            raise AssertionError("invalid relation_l0 config was accepted")

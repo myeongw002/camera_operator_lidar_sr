@@ -24,7 +24,10 @@ def test_relation_evaluator_compares_zero_initialized_prior_and_final_on_one_mas
     assert global_metrics["mae_improvement"] == global_metrics["rmse_improvement"] == global_metrics["mean_abs_correction"] == 0.0
     assert global_metrics["supported_count"] == global_metrics["valid_target_count"] == 8
     assert global_metrics["anchor_coverage"] == 1.0
+    assert "both_anchor_count" in global_metrics
     assert all((output / name).exists() for name in ("region_metrics.csv", "beam_metrics.csv", "distance_metrics.csv", "relation_metrics.csv"))
     rows = list(csv.DictReader((output / "beam_metrics.csv").open()))
+    assert "both_anchor_count" in rows[0]
+    for name in ("region_metrics.csv", "distance_metrics.csv", "relation_metrics.csv"):
+        assert "both_anchor_count" in next(csv.reader((output / name).open()))
     assert next(row for row in rows if row["target_row"] == "0")["empty_group"] == "True"
-

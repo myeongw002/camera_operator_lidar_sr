@@ -26,10 +26,16 @@ the relation checkpoint directly:
 
 ```bash
 python scripts/prepare_range_images.py ... --input-row-indices 0,4,8,13,17,21,25,29,34,38,42,46,50,55,59,63
-python scripts/train_relation_l0.py --dataset-root /data/processed --output-root outputs --experiment-name relation_l0 --seed 42
+python scripts/train_relation_l0.py --dataset-root /data/processed --train-split splits/train.txt --val-split splits/validation.txt --output-root outputs --experiment-name relation_l0 --seed 42
 python scripts/evaluate_relation.py --checkpoint outputs/relation_l0/seed_42/checkpoints/best.ckpt --dataset-root /data/processed --split-file splits/test.txt --output-root outputs/relation_l0_eval --device cpu --distance-bins 0 10 20 40 inf
 python scripts/infer.py --checkpoint outputs/relation_l0/seed_42/checkpoints/best.ckpt --frame-root /data/processed/00/000000 --output results/relation_l0.npz
 ```
+
+The L0 row contract requires regenerating processed data created with the old
+input-row list. The recommended run always supplies both train and validation
+splits, so `best.ckpt` is produced for the evaluate and infer commands above.
+If validation is omitted, only `last.ckpt` may be written; use that checkpoint
+instead or rerun training with a validation split.
 
 ## Resumable experiments
 

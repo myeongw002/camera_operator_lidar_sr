@@ -79,6 +79,17 @@ def validate_config(config: dict) -> dict:
         raise ValueError("evaluation.model_type must be legacy_operator or relation_l0")
     if config["student"].get("model_type") == "relation_l0" and config["evaluation"].get("model_type", "relation_l0") != "relation_l0":
         raise ValueError("relation_l0 student requires relation_l0 evaluation")
+    if config["student"].get("model_type") == "relation_l0":
+        if any(teacher.get("enabled", False) for teacher in config["teachers"].values()):
+            raise ValueError("relation_l0 currently supports L0-only pipelines; teachers must be disabled")
+        if config["distillation"].get("enabled", True):
+            raise ValueError("relation_l0 distillation is not implemented")
+        if config["evaluation"].get("evaluate_teachers", False):
+            raise ValueError("relation_l0 currently supports L0-only pipelines; evaluation.evaluate_teachers must be false")
+        if config["evaluation"].get("evaluate_distilled", False):
+            raise ValueError("relation_l0 distillation is not implemented; evaluation.evaluate_distilled must be false")
+        if config["inference"].get("checkpoint") != "student":
+            raise ValueError("relation_l0 inference requires inference.checkpoint=student")
     selected_teacher = config["distillation"].get("teacher")
     if config["distillation"].get("enabled", True) and not config["teachers"][selected_teacher].get("enabled", False):
         raise ValueError("distillation.enabled requires its selected teacher to be enabled")

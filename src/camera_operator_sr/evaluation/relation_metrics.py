@@ -27,7 +27,9 @@ def anchor_selection_statistics(output, target_range: Tensor, mask: Tensor) -> t
     target = target_range.squeeze(1)
     valid = output.anchor_valid.bool()
     errors = (output.anchor_ranges - target[..., None]).abs()
-    eligible = mask.squeeze(1).bool() & valid.all(dim=-1) & ~torch.isclose(errors[..., 0], errors[..., 1])
+    gt_error_tie = torch.isclose(errors[..., 0], errors[..., 1])
+    final_weight_tie = torch.isclose(output.final_weights[..., 0], output.final_weights[..., 1])
+    eligible = mask.squeeze(1).bool() & valid.all(dim=-1) & ~gt_error_tie & ~final_weight_tie
     selected = output.final_weights.argmax(dim=-1) == errors.argmin(dim=-1)
     return int((selected & eligible).sum()), int(eligible.sum())
 
@@ -41,6 +43,7 @@ class RelationMetricAccumulator:
     final_absolute_error_sum: float = 0.0
     final_squared_error_sum: float = 0.0
     correction_absolute_sum: float = 0.0
+    both_anchor_count: int = 0
     prior_entropy_sum: float = 0.0
     final_entropy_sum: float = 0.0
     supported_count: int = 0
@@ -60,7 +63,9 @@ class RelationMetricAccumulator:
         self.prior_squared_error_sum += float(prior_error.square().sum())
         self.final_absolute_error_sum += float(final_error.abs().sum())
         self.final_squared_error_sum += float(final_error.square().sum())
-        self.correction_absolute_sum += float(output.correction[supported].abs().sum())
+        both_anchor = supported.squeeze(1).bool() & output.anchor_valid.bool().all(dim=-1)
+        self.correction_absolute_sum += float(output.correction.squeeze(1)[both_anchor].abs().sum())
+        self.both_anchor_count += int(both_anchor.sum())
         prior_entropy, count = masked_weight_entropy(output.prior_weights, supported)
         final_entropy, final_count = masked_weight_entropy(output.final_weights, supported)
         if count != final_count:
@@ -84,7 +89,8 @@ class RelationMetricAccumulator:
                 "supported_count": 0, "valid_target_count": self.valid_target_count,
                 "unsupported_valid_target_count": self.unsupported_valid_target_count,
                 "anchor_coverage": None if not self.valid_target_count else 0.0,
-                "mean_abs_correction": None, "prior_weight_entropy": None,
+                "mean_abs_correction": None, "both_anchor_count": self.both_anchor_count,
+                "prior_weight_entropy": None,
                 "final_weight_entropy": None, "anchor_selection_accuracy": None,
                 "anchor_selection_count": self.anchor_selection_count, "empty_group": True,
             }
@@ -100,7 +106,8 @@ class RelationMetricAccumulator:
             "supported_count": count, "valid_target_count": self.valid_target_count,
             "unsupported_valid_target_count": self.unsupported_valid_target_count,
             "anchor_coverage": count / self.valid_target_count if self.valid_target_count else None,
-            "mean_abs_correction": self.correction_absolute_sum / count,
+            "mean_abs_correction": self.correction_absolute_sum / self.both_anchor_count if self.both_anchor_count else None,
+            "both_anchor_count": self.both_anchor_count,
             "prior_weight_entropy": self.prior_entropy_sum / count,
             "final_weight_entropy": self.final_entropy_sum / count,
             "anchor_selection_accuracy": self.anchor_selection_correct / self.anchor_selection_count if self.anchor_selection_count else None,

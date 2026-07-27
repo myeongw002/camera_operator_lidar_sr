@@ -21,7 +21,7 @@ from camera_operator_sr.training.modules import generated_mask_for
 
 
 REGION_ORDER = ("full", "camera_frustum", "gt_camera_visible", "camera_boundary", "camera_interior", "transition", "side", "rear", "front_azimuth")
-METRIC_FIELDS = ["prior_range_mae", "prior_range_rmse", "final_range_mae", "final_range_rmse", "mae_improvement", "rmse_improvement", "supported_count", "valid_target_count", "unsupported_valid_target_count", "anchor_coverage", "mean_abs_correction", "prior_weight_entropy", "final_weight_entropy", "anchor_selection_accuracy", "anchor_selection_count", "empty_group"]
+METRIC_FIELDS = ["prior_range_mae", "prior_range_rmse", "final_range_mae", "final_range_rmse", "mae_improvement", "rmse_improvement", "supported_count", "valid_target_count", "unsupported_valid_target_count", "anchor_coverage", "mean_abs_correction", "both_anchor_count", "prior_weight_entropy", "final_weight_entropy", "anchor_selection_accuracy", "anchor_selection_count", "empty_group"]
 BEAM_FIELDS = ["target_row", "target_elevation_deg", "is_observed_row", "is_generated_row", *METRIC_FIELDS]
 REGION_FIELDS = ["region", *METRIC_FIELDS]
 DISTANCE_FIELDS = ["distance_min_m", "distance_max_m", "region", *METRIC_FIELDS]

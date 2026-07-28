@@ -17,22 +17,31 @@ class LocalCandidateContext:
     tokens: Tensor                 # [B,H,W,K,9]
 
 
-def robust_normalized_log_range(ranges: Tensor, valid: Tensor, *, eps: float = 1e-6, clamp: float = 5.0) -> Tensor:
-    """Median/MAD-normalize valid ranges, averaging the two middle values for even counts."""
-    if ranges.shape != valid.shape:
-        raise ValueError("ranges and valid must have the same shape")
-    log_ranges = torch.log(ranges.clamp_min(eps))
-    finite_log = torch.nan_to_num(log_ranges, nan=0.0, posinf=0.0, neginf=0.0)
+def robust_normalize_candidates(values: Tensor, valid: Tensor, *, eps: float = 1e-6, clamp: float = 5.0) -> Tensor:
+    """Locally median/MAD-normalize candidate values without invalid leakage.
+
+    ``values`` and ``valid`` are ``[B,H,W,K]``.  The masked median and MAD
+    average the two central elements for even valid counts.  Empty and
+    singleton groups are finite; invalid positions are always exactly zero.
+    """
+    if values.shape != valid.shape:
+        raise ValueError("values and valid must have the same shape")
+    finite_values = torch.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
     count = valid.sum(dim=-1, keepdim=True)
-    ordered = finite_log.masked_fill(~valid.bool(), float("inf")).sort(dim=-1).values
+    ordered = finite_values.masked_fill(~valid.bool(), float("inf")).sort(dim=-1).values
     lower_index = ((count - 1).clamp_min(0) // 2).long()
     upper_index = (count.clamp_min(1) // 2).long()
     median = .5 * (ordered.gather(-1, lower_index) + ordered.gather(-1, upper_index)).masked_fill(count.eq(0), 0.0)
-    deviation = (finite_log - median).abs()
+    deviation = (finite_values - median).abs()
     ordered_deviation = deviation.masked_fill(~valid.bool(), float("inf")).sort(dim=-1).values
     mad = (.5 * (ordered_deviation.gather(-1, lower_index) + ordered_deviation.gather(-1, upper_index))).masked_fill(count.eq(0), 0.0)
-    normalized = (finite_log - median) / (mad + eps)
+    normalized = (finite_values - median) / (mad + eps)
     return torch.where(valid.bool(), normalized.clamp(-clamp, clamp), torch.zeros_like(normalized))
+
+
+def robust_normalized_log_range(ranges: Tensor, valid: Tensor, *, eps: float = 1e-6, clamp: float = 5.0) -> Tensor:
+    """Median/MAD-normalize valid log-ranges for the unchanged L0 token."""
+    return robust_normalize_candidates(torch.log(ranges.clamp_min(eps)), valid, eps=eps, clamp=clamp)
 
 
 def build_local_candidate_context(input_range: Tensor, input_intensity: Tensor, input_valid: Tensor, index: CandidateIndex) -> LocalCandidateContext:

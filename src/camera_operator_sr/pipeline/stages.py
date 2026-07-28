@@ -8,9 +8,10 @@ DEPENDENCIES = {
     "P04_create_splits": ("P02_prepare_range_images",), "P05_train_student": ("P04_create_splits",),
     "P06_train_teacher_correct": ("P03_precompute_depth", "P05_train_student"),
     "P07_train_teacher_controls": ("P03_precompute_depth", "P05_train_student"),
-    "P08_evaluate_teachers": ("P06_train_teacher_correct", "P07_train_teacher_controls"),
+    # G has no control teacher in PR3, so a disabled P07 must not block P08.
+    "P08_evaluate_teachers": ("P06_train_teacher_correct",),
     "P09_train_distillation": ("P05_train_student", "P06_train_teacher_correct"),
-    "P10_evaluate_sr": ("P05_train_student", "P09_train_distillation"), "P11_inference": ("P09_train_distillation",),
+    "P10_evaluate_sr": ("P05_train_student",), "P11_inference": ("P05_train_student",),
     "P12_summary": ("P08_evaluate_teachers", "P10_evaluate_sr", "P11_inference"),
 }
 

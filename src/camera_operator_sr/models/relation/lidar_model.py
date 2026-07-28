@@ -58,7 +58,8 @@ class RelationLidarModel(nn.Module):
             self._candidate_cache[key] = build_candidate_index(input_elevation, target_elevation, width, self.horizontal_radius)
         return self._candidate_cache[key]
 
-    def forward(self, batch: dict) -> RelationOutput:
+    def build_state(self, batch: dict) -> dict:
+        """Build the one-pass L0 state reused by the camera-guided wrapper."""
         lidar, target = batch["lidar"], batch["target"]
         for values, name in ((lidar["elevation"], "input elevation"), (target["elevation"], "target elevation"), (lidar["azimuth"], "azimuth")):
             if values.ndim == 2: assert_shared_geometry(values, name)
@@ -77,4 +78,12 @@ class RelationLidarModel(nn.Module):
         final_weights = corrected_two_anchor_weights(prior.weights, anchor_valid, correction)
         prediction = (final_weights * anchor_ranges).sum(dim=-1)
         prediction = torch.where(prior.has_anchor.squeeze(1), prediction, torch.zeros_like(prediction))[:, None]
-        return RelationOutput(prior.weights, final_weights, correction, anchor_ranges, anchor_valid, prior.has_anchor, prediction, relation_feature)
+        return {"index": index, "context": context, "prior": prior, "anchor_ranges": anchor_ranges,
+                "anchor_valid": anchor_valid, "relation_feature": relation_feature, "correction": correction,
+                "final_weights": final_weights, "prediction": prediction}
+
+    def forward(self, batch: dict) -> RelationOutput:
+        state = self.build_state(batch)
+        return RelationOutput(state["prior"].weights, state["final_weights"], state["correction"],
+                              state["anchor_ranges"], state["anchor_valid"], state["prior"].has_anchor,
+                              state["prediction"], state["relation_feature"])

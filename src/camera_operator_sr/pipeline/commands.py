@@ -30,6 +30,11 @@ def student(context, mode: str | None = None) -> list[str]:
 
 def teacher(context, name: str, mode: str | None = None) -> list[str]:
     cfg = context.config["teachers"][name]
+    if cfg.get("model_type") == "relation_guided":
+        command = python("scripts/train_relation_guided.py") + ["--l0-checkpoint", str(context.artifacts["student_best_checkpoint"]), "--depth-mode", cfg.get("depth_mode", "correct")] + training_common(context, cfg, mode)
+        for key, flag, default in (("batch_size", "--batch-size", 2), ("learning_rate", "--learning-rate", 3e-4), ("weight_decay", "--weight-decay", 0.0), ("camera_point_hidden_dim", "--camera-point-hidden-dim", 16), ("camera_relation_hidden_dim", "--camera-relation-hidden-dim", 32), ("camera_correction_limit", "--camera-correction-limit", 3.0), ("camera_correction_reg_weight", "--camera-correction-reg-weight", 1e-3)):
+            command += [flag, str(cfg.get(key, default))]
+        return command
     return python("scripts/train_teacher.py") + ["--baseline-checkpoint", str(context.artifacts["student_best_checkpoint"]), "--depth-mode", cfg["depth_mode"]] + training_common(context, cfg, mode) + ["--batch-size", str(cfg.get("batch_size", 1)), "--learning-rate", str(cfg.get("learning_rate", 2e-4))]
 
 def distillation(context, mode: str | None = None) -> list[str]:
@@ -37,6 +42,9 @@ def distillation(context, mode: str | None = None) -> list[str]:
     return python("scripts/train_distill.py") + ["--baseline", str(context.artifacts["student_best_checkpoint"]), "--teacher", str(context.artifacts["teacher_checkpoints"][cfg["teacher"]]), "--depth-mode", cfg["depth_mode"], "--advantage-mode", cfg.get("advantage_mode", "soft")] + training_common(context, cfg, mode) + ["--batch-size", str(cfg.get("batch_size", 1)), "--learning-rate", str(cfg.get("learning_rate", 1e-4))]
 
 def teacher_evaluation(context) -> list[str]:
+    if context.config["teachers"].get("correct", {}).get("model_type") == "relation_guided":
+        bins = context.config["evaluation"].get("distance_bins", [])
+        return python("scripts/evaluate_relation_guided.py") + ["--checkpoint", str(context.artifacts["teacher_checkpoints"]["correct"]), "--dataset-root", str(context.processed_root), "--split-file", str(context.test_split), "--output-root", str(context.evaluations_root / "teachers"), "--depth-mode", context.config["teachers"]["correct"].get("depth_mode", "correct"), "--device", context.device] + (["--distance-bins", *map(str, bins)] if bins else [])
     command = python("scripts/evaluate_teacher.py") + ["--baseline-checkpoint", str(context.artifacts["student_best_checkpoint"]), "--teacher-correct", str(context.artifacts["teacher_checkpoints"]["correct"]), "--dataset-root", str(context.processed_root), "--split-file", str(context.test_split), "--output-root", str(context.evaluations_root/"teachers"), "--device", context.device]
     for name, flag in (("none", "--teacher-none"), ("frame_shuffled", "--teacher-frame-shuffled"), ("spatial_shuffled", "--teacher-spatial-shuffled"), ("constant", "--teacher-constant"), ("oracle", "--teacher-oracle")):
         if name in context.artifacts.get("teacher_checkpoints", {}): command += [flag, str(context.artifacts["teacher_checkpoints"][name])]

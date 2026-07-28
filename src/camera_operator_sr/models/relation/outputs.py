@@ -22,3 +22,17 @@ class RelationOutput:
     has_anchor: Tensor
     predicted_range: Tensor
     relation_feature: Tensor | None
+
+
+@dataclass
+class GuidedRelationOutput:
+    """Camera-guided relation output; camera tensors are never deploy inputs."""
+    lidar: RelationOutput
+    camera_correction: Tensor
+    total_correction: Tensor
+    guided_weights: Tensor
+    predicted_range: Tensor
+    camera_candidate_depth: Tensor
+    camera_candidate_valid: Tensor
+    camera_guidance_valid: Tensor
+    camera_relation_feature: Tensor | None

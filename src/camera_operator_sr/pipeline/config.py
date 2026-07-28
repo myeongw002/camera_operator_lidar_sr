@@ -21,7 +21,7 @@ ALLOWED = {
     "inference": {"enabled", "max_frames", "checkpoint"},
     "stages": {"prepare_range_images", "precompute_depth", "create_splits", "train_student", "train_teachers", "evaluate_teachers", "train_distillation", "evaluate_sr", "inference"},
 }
-TEACHER_ALLOWED = {"enabled", "experiment_name", "depth_mode", "epochs", "batch_size", "learning_rate"}
+TEACHER_ALLOWED = {"enabled", "model_type", "experiment_name", "depth_mode", "epochs", "batch_size", "learning_rate", "weight_decay", "camera_point_hidden_dim", "camera_relation_hidden_dim", "camera_correction_limit", "camera_correction_reg_weight"}
 DEPTH_MODES = {"correct", "none", "frame_shuffled", "spatial_shuffled", "constant", "oracle"}
 
 
@@ -80,11 +80,13 @@ def validate_config(config: dict) -> dict:
     if config["student"].get("model_type") == "relation_l0" and config["evaluation"].get("model_type", "relation_l0") != "relation_l0":
         raise ValueError("relation_l0 student requires relation_l0 evaluation")
     if config["student"].get("model_type") == "relation_l0":
-        if any(teacher.get("enabled", False) for teacher in config["teachers"].values()):
-            raise ValueError("relation_l0 currently supports L0-only pipelines; teachers must be disabled")
+        enabled_teachers = {name: teacher for name, teacher in config["teachers"].items() if teacher.get("enabled", False)}
+        valid_guided = set(enabled_teachers) == {"correct"} and enabled_teachers["correct"].get("model_type") == "relation_guided"
+        if enabled_teachers and not valid_guided:
+            raise ValueError("relation_l0 supports only one relation_guided correct teacher; control and legacy teachers must be disabled")
         if config["distillation"].get("enabled", True):
             raise ValueError("relation_l0 distillation is not implemented")
-        if config["evaluation"].get("evaluate_teachers", False):
+        if config["evaluation"].get("evaluate_teachers", False) and not valid_guided:
             raise ValueError("relation_l0 currently supports L0-only pipelines; evaluation.evaluate_teachers must be false")
         if config["evaluation"].get("evaluate_distilled", False):
             raise ValueError("relation_l0 distillation is not implemented; evaluation.evaluate_distilled must be false")

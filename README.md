@@ -37,6 +37,24 @@ splits, so `best.ckpt` is produced for the evaluate and infer commands above.
 If validation is omitted, only `last.ckpt` may be written; use that checkpoint
 instead or rerun training with a validation split.
 
+## Camera-guided relation model (G)
+
+G is a training/evaluation model, not the final LiDAR-only deployment model.
+After regenerating the range-image rows and precomputing relative inverse depth,
+prepare an L0 checkpoint, train G, then compare it with its frozen source on
+the same camera-guidance-valid generated queries:
+
+```bash
+python scripts/precompute_relative_depth.py --image-root /data/images/00 --output-root /data/processed/00 --model depth-anything/Depth-Anything-V2-Large-hf
+python scripts/train_relation_guided.py --dataset-root /data/processed --train-split splits/train.txt --val-split splits/validation.txt --l0-checkpoint outputs/relation_l0/seed_42/checkpoints/best.ckpt --output-root outputs --experiment-name relation_guided --seed 42 --depth-mode correct
+python scripts/evaluate_relation_guided.py --checkpoint outputs/relation_guided/seed_42/checkpoints/best.ckpt --dataset-root /data/processed --split-file splits/test.txt --output-root outputs/relation_guided_eval --depth-mode correct --device cpu
+```
+
+G projects only the six observed 16-channel LiDAR candidates for each query;
+it never projects a provisional query range. Its camera correction is applied
+only when both center anchors and both center camera samples are valid. PR3
+does not implement L1 transfer, KD, or camera-guided LiDAR-only inference.
+
 ## Resumable experiments
 
 The three training entry points write isolated experiments under
@@ -98,6 +116,12 @@ PYTHONPATH=src python scripts/run_pipeline.py --config configs/pipeline/kitti_pi
 PYTHONPATH=src python scripts/run_pipeline.py --config configs/pipeline/kitti_pilot.yaml --resume
 PYTHONPATH=src python scripts/run_pipeline.py --config configs/pipeline/kitti_pilot.yaml --from-stage P08_evaluate_teachers
 PYTHONPATH=src python scripts/run_pipeline.py --config configs/pipeline/kitti_pilot.yaml --force-stage P03_precompute_depth
+```
+
+The PR3 pilot keeps the deployable L0 student while adding G only to P06/P08:
+
+```bash
+PYTHONPATH=src python scripts/run_pipeline.py --config configs/pipeline/kitti_relation_g_pilot.yaml --dry-run --skip-path-validation
 ```
 
 `dataset.max_frames_per_sequence` selects a single per-sequence frame manifest

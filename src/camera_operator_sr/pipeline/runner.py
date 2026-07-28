@@ -225,9 +225,12 @@ class PipelineRunner:
         if stage_id == "P05_train_student": return [self._experiment_checkpoint(c.config["student"]), self._last_checkpoint(c.config["student"])]
         if stage_id == "P06_train_teacher_correct": return [self._experiment_checkpoint(c.config["teachers"]["correct"])]
         if stage_id == "P07_train_teacher_controls": return [self._experiment_checkpoint(value) for name, value in c.config["teachers"].items() if name != "correct" and value.get("enabled")]
-        if stage_id == "P08_evaluate_teachers": return [c.evaluations_root/"teachers"/"teacher_comparison.csv", c.evaluations_root/"teachers"/"teacher_superiority.json"]
+        if stage_id == "P08_evaluate_teachers":
+            guided = c.config["teachers"].get("correct", {}).get("model_type") == "relation_guided"
+            names = ("summary.json", "region_metrics.csv", "beam_metrics.csv", "distance_metrics.csv", "guided_relation_metrics.csv") if guided else ("teacher_comparison.csv", "teacher_superiority.json")
+            return [c.evaluations_root / "teachers" / name for name in names]
         if stage_id == "P09_train_distillation": return [self._experiment_checkpoint(c.config["distillation"])]
-        if stage_id == "P10_evaluate_sr":
+        if stage_id in {"P08_evaluate_teachers", "P10_evaluate_sr"}:
             names = []
             evaluation = c.config["evaluation"]
             if evaluation.get("evaluate_student", True): names.append("student_baseline")
@@ -318,7 +321,7 @@ class PipelineRunner:
             __import__("PIL")
         if self.context.config["depth"].get("enabled"):
             __import__("transformers")
-        for script in ("prepare_range_images.py", "precompute_relative_depth.py", "train_student.py", "train_relation_l0.py", "train_teacher.py", "train_distill.py", "evaluate_sr.py", "evaluate_relation.py", "evaluate_teacher.py", "infer.py"):
+        for script in ("prepare_range_images.py", "precompute_relative_depth.py", "train_student.py", "train_relation_l0.py", "train_relation_guided.py", "train_teacher.py", "train_distill.py", "evaluate_sr.py", "evaluate_relation.py", "evaluate_relation_guided.py", "evaluate_teacher.py", "infer.py"):
             if not (Path("scripts") / script).exists(): raise FileNotFoundError(Path("scripts") / script)
         if not self.skip_path_validation and not self.context.processed_root.exists() and self.context.config["dataset"]["type"] == "processed_synthetic": raise FileNotFoundError(self.context.processed_root)
         self.context.root.mkdir(parents=True, exist_ok=True)

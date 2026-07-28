@@ -82,7 +82,7 @@ def extract_dataset_geometry(sample_or_batch: dict, *, candidate_horizontal_radi
 def geometry_from_sample(sample: dict, model: nn.Module) -> dict:
     radius = int(getattr(model, "horizontal_radius", getattr(model, "model_config", {}).get("horizontal_radius", 1)))
     geometry = build_geometry_metadata(input_elevation=sample["lidar"]["elevation"], target_elevation=sample["target"]["elevation"], azimuth=sample["lidar"]["azimuth"], candidate_horizontal_radius=radius)
-    if getattr(model, "model_type", None) == "relation_l0":
+    if getattr(model, "model_type", None) in {"relation_l0", "relation_guided"}:
         geometry.update(candidate_layout="lower[-1,0,+1],upper[-1,0,+1]", anchor_slots=[1, 4])
     return geometry
 
@@ -90,7 +90,7 @@ def geometry_from_sample(sample: dict, model: nn.Module) -> dict:
 def save_checkpoint(path: str | Path, model: nn.Module, *, epoch: int, global_step: int, sample: dict, optimizer=None, data_config: dict | None = None, operator_config: dict | None = None, loss_config: dict | None = None, dataset_split: str | None = None, depth_mode: str = "none", validation_score: float | None = None, validation_count: int | None = None, experiment_metadata: dict | None = None, advantage_config: dict | None = None, rng_state: dict | None = None, best_validation_score: float | None = None, best_epoch: int | None = None, best_global_step: int | None = None, source_checkpoints: dict | None = None) -> None:
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
     geometry = geometry_from_sample(sample, model)
-    schema = CHECKPOINT_SCHEMA_VERSION if getattr(model, "model_type", None) == "relation_l0" else LEGACY_CHECKPOINT_SCHEMA_VERSION
+    schema = CHECKPOINT_SCHEMA_VERSION if getattr(model, "model_type", None) in {"relation_l0", "relation_guided"} else LEGACY_CHECKPOINT_SCHEMA_VERSION
     payload = {"checkpoint_schema_version": schema, "geometry": geometry, "model": model.state_dict(), "model_config": getattr(model, "model_config", {}), "data_config": data_config or {}, "operator_config": operator_config or {}, "loss_config": loss_config or {}, "dataset_split": dataset_split, "depth_mode": str(depth_mode), "epoch": epoch, "global_step": global_step, "rng_state": rng_state, "source_checkpoints": source_checkpoints or {}}
     if optimizer is not None: payload["optimizer"] = optimizer.state_dict()
     if validation_score is not None or validation_count is not None:
@@ -129,8 +129,8 @@ def _checkpoint_geometry(checkpoint: dict) -> dict:
         if geometry.get("candidate_layout") != "lower[-1,0,+1],upper[-1,0,+1]" or geometry.get("anchor_slots") != [1, 4]:
             raise ValueError("Relation checkpoint geometry metadata has incompatible candidate layout")
         model_config = checkpoint.get("model_config", {})
-        if model_config.get("model_type") != "relation_l0":
-            raise ValueError("Schema-4 checkpoint must declare model_type relation_l0")
+        if model_config.get("model_type") not in {"relation_l0", "relation_guided"}:
+            raise ValueError("Schema-4 checkpoint must declare a relation model type")
         if int(model_config.get("horizontal_radius", -1)) != int(geometry["candidate_horizontal_radius"]):
             raise ValueError("Relation checkpoint geometry horizontal radius disagrees with model_config")
         if model_config.get("candidate_layout") != geometry["candidate_layout"] or model_config.get("anchor_slots") != geometry["anchor_slots"]:

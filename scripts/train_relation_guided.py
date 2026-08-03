@@ -47,14 +47,14 @@ def main():
     for epoch in range(start,a.epochs):
         model.train();total=0.
         for batch in loader:
-            out=model(move(batch,a.device));loss=guided_relation_supervised_loss(out,move(batch,a.device),camera_correction_reg_weight=a.camera_correction_reg_weight);optimizer.zero_grad(set_to_none=True);loss["loss"].backward();optimizer.step();step+=1;total+=float(loss["loss"].detach())
+            batch=move(batch,a.device); out=model(batch); loss=guided_relation_supervised_loss(out,batch,camera_correction_reg_weight=a.camera_correction_reg_weight); optimizer.zero_grad(set_to_none=True);loss["loss"].backward();optimizer.step();step+=1;total+=float(loss["loss"].detach())
         model.eval();acc=ValidationRangeAccumulator()
         with torch.no_grad():
             for batch in vloader:
                 batch=move(batch,a.device);out=model(batch);mask=generated_mask_for(batch)*batch["target"]["valid"]*out.lidar.has_anchor*out.camera_guidance_valid;acc.update(out.predicted_range,batch["target"]["range"],mask)
         score,count=acc.score(),acc.count;best_now=is_historical_best(score,best)
         if best_now: best,best_epoch,best_step=score,epoch+1,step
-        common=dict(epoch=epoch+1,global_step=step,sample=train[0],optimizer=optimizer,dataset_split=a.train_split,depth_mode=a.depth_mode,validation_score=score,validation_count=count,experiment_metadata=metadata,loss_config=loss_config,rng_state=capture_rng_state(generator),best_validation_score=best,best_epoch=best_epoch,best_global_step=best_step,source_checkpoints=source)
+        common=dict(epoch=epoch+1,global_step=step,sample=train[0],optimizer=optimizer,dataset_split=a.train_split,depth_mode=a.depth_mode,validation_score=score,validation_count=count,validation_metric="camera_guidance_valid_query_weighted_range_mae",experiment_metadata=metadata,loss_config=loss_config,rng_state=capture_rng_state(generator),best_validation_score=best,best_epoch=best_epoch,best_global_step=best_step,source_checkpoints=source)
         save_checkpoint(paths.last_checkpoint,model,**common)
         if best_now: save_checkpoint(paths.best_checkpoint,model,**common)
         append_jsonl(paths.metrics,{"epoch":epoch+1,"global_step":step,"training_loss":total/max(len(loader),1),"validation_score":score,"validation_count":count,"is_best":best_now})

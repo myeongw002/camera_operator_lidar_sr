@@ -1,8 +1,11 @@
 from pathlib import Path
+import sys
+import types
 
 from camera_operator_sr.pipeline import commands
 from camera_operator_sr.pipeline.config import load_config, validate_config
 from camera_operator_sr.pipeline.runner import PipelineContext, PipelineRunner
+from camera_operator_sr.pipeline.stages import downstream
 from pipeline_support import synthetic_config, write_config
 
 
@@ -96,3 +99,28 @@ def test_relation_guided_synthetic_pipeline_trains_and_evaluates_g(tmp_path):
     root = Path(config["pipeline"]["output_root"]) / config["pipeline"]["name"]
     assert (root / "experiments" / "relation_guided" / "seed_17" / "checkpoints" / "last.ckpt").exists()
     assert (root / "evaluations" / "teachers" / "guided_relation_metrics.csv").exists()
+
+
+def test_legacy_dependencies_remain_downstream_of_control_and_distillation_stages():
+    assert "P08_evaluate_teachers" in downstream("P07_train_teacher_controls")
+    assert {"P10_evaluate_sr", "P11_inference"} <= downstream("P09_train_distillation")
+
+
+def test_relation_guided_synthetic_pipeline_runs_enabled_p03_with_fake_depth_command(tmp_path, monkeypatch):
+    config = synthetic_config(tmp_path)
+    configure_l0_only(config)
+    config["inference"]["max_frames"] = 1
+    config["depth"]["enabled"] = True
+    config["teachers"]["correct"].update(enabled=True, model_type="relation_guided", experiment_name="relation_guided", depth_mode="correct")
+    config["evaluation"].update(evaluate_teachers=True)
+    config["stages"].update(precompute_depth=True, train_teachers=True, evaluate_teachers=True, train_distillation=False)
+    config = validate_config(config)
+    path = write_config(tmp_path, config)
+    monkeypatch.setitem(sys.modules, "transformers", types.ModuleType("transformers"))
+    runner = PipelineRunner(config, path)
+    original = runner._run_command
+    monkeypatch.setattr(commands, "depth", lambda *_args, **_kwargs: ["fake-depth"])
+    monkeypatch.setattr(runner, "_run_command", lambda stage, command: 0 if stage.startswith("P03_precompute_depth") else original(stage, command))
+    assert runner.run() == 0
+    assert runner.state.value["stages"]["P03_precompute_depth"]["status"] == "SUCCEEDED"
+    assert (runner.context.summary_root / "pipeline_summary.json").exists()

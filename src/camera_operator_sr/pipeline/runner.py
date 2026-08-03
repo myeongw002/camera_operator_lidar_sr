@@ -230,7 +230,7 @@ class PipelineRunner:
             names = ("summary.json", "region_metrics.csv", "beam_metrics.csv", "distance_metrics.csv", "guided_relation_metrics.csv") if guided else ("teacher_comparison.csv", "teacher_superiority.json")
             return [c.evaluations_root / "teachers" / name for name in names]
         if stage_id == "P09_train_distillation": return [self._experiment_checkpoint(c.config["distillation"])]
-        if stage_id in {"P08_evaluate_teachers", "P10_evaluate_sr"}:
+        if stage_id == "P10_evaluate_sr":
             names = []
             evaluation = c.config["evaluation"]
             if evaluation.get("evaluate_student", True): names.append("student_baseline")
@@ -257,7 +257,11 @@ class PipelineRunner:
         if stage_id == "P03_precompute_depth":
             for sequence in self._all_sequences():
                 for name in self._frame_names(sequence): validate_depth_frame(self.context.processed_root / sequence / name)
-        if stage_id == "P10_evaluate_sr":
+        guided_teacher_evaluation = (
+            stage_id == "P08_evaluate_teachers"
+            and self.context.config["teachers"].get("correct", {}).get("model_type") == "relation_guided"
+        )
+        if stage_id == "P10_evaluate_sr" or guided_teacher_evaluation:
             for path in self._expected(stage_id):
                 if path.name == "summary.json": json.loads(path.read_text())
                 else: validate_csv_metrics(path)

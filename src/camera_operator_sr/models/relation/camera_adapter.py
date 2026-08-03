@@ -1,4 +1,10 @@
-"""Small masked camera relation adapter; no attention, CNN, or absolute azimuth."""
+"""Small masked camera relation adapter; no attention, CNN, or absolute azimuth.
+
+Only camera-valid candidates enter masked pooling.  Consequently the token's
+camera-valid and LiDAR-valid fields are normally one for pooled candidates;
+they remain in the fixed nine-value checkpoint contract for diagnostics and a
+future PR4 ablation of camera-valid-only versus LiDAR-valid pooling.
+"""
 import torch
 from torch import Tensor, nn
 

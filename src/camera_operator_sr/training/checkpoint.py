@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import math
 import warnings
 
 import torch
@@ -87,20 +88,22 @@ def geometry_from_sample(sample: dict, model: nn.Module) -> dict:
     return geometry
 
 
-def save_checkpoint(path: str | Path, model: nn.Module, *, epoch: int, global_step: int, sample: dict, optimizer=None, data_config: dict | None = None, operator_config: dict | None = None, loss_config: dict | None = None, dataset_split: str | None = None, depth_mode: str = "none", validation_score: float | None = None, validation_count: int | None = None, experiment_metadata: dict | None = None, advantage_config: dict | None = None, rng_state: dict | None = None, best_validation_score: float | None = None, best_epoch: int | None = None, best_global_step: int | None = None, source_checkpoints: dict | None = None) -> None:
+def save_checkpoint(path: str | Path, model: nn.Module, *, epoch: int, global_step: int, sample: dict, optimizer=None, data_config: dict | None = None, operator_config: dict | None = None, loss_config: dict | None = None, dataset_split: str | None = None, depth_mode: str = "none", validation_score: float | None = None, validation_count: int | None = None, validation_metric: str = "global_query_weighted_range_mae", experiment_metadata: dict | None = None, advantage_config: dict | None = None, rng_state: dict | None = None, best_validation_score: float | None = None, best_epoch: int | None = None, best_global_step: int | None = None, source_checkpoints: dict | None = None) -> None:
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
+    if not isinstance(validation_metric, str) or not validation_metric.strip():
+        raise ValueError("validation_metric must be a non-empty string")
     geometry = geometry_from_sample(sample, model)
     schema = CHECKPOINT_SCHEMA_VERSION if getattr(model, "model_type", None) in {"relation_l0", "relation_guided"} else LEGACY_CHECKPOINT_SCHEMA_VERSION
     payload = {"checkpoint_schema_version": schema, "geometry": geometry, "model": model.state_dict(), "model_config": getattr(model, "model_config", {}), "data_config": data_config or {}, "operator_config": operator_config or {}, "loss_config": loss_config or {}, "dataset_split": dataset_split, "depth_mode": str(depth_mode), "epoch": epoch, "global_step": global_step, "rng_state": rng_state, "source_checkpoints": source_checkpoints or {}}
     if optimizer is not None: payload["optimizer"] = optimizer.state_dict()
     if validation_score is not None or validation_count is not None:
-        if validation_score is None or validation_count is None or validation_count == 0:
-            raise ValueError("best checkpoint requires non-zero validation_count and validation_score")
-        payload.update(validation_metric="global_query_weighted_range_mae", validation_score=float(validation_score), validation_count=int(validation_count))
+        if validation_score is None or validation_count is None or validation_count <= 0 or not math.isfinite(float(validation_score)):
+            raise ValueError("best checkpoint requires finite validation_score and non-zero validation_count")
+        payload.update(validation_metric=validation_metric, validation_score=float(validation_score), validation_count=int(validation_count))
         payload.update(current_validation_score=float(validation_score), best_validation_score=float(best_validation_score if best_validation_score is not None else validation_score), best_epoch=int(best_epoch if best_epoch is not None else epoch), best_global_step=int(best_global_step if best_global_step is not None else global_step))
     elif experiment_metadata is not None:
         # A train-only run remains resumable; absence of validation is explicit, never implied by a missing key.
-        payload.update(validation_metric="global_query_weighted_range_mae", validation_score=None, validation_count=0,
+        payload.update(validation_metric=validation_metric, validation_score=None, validation_count=0,
                        current_validation_score=None, best_validation_score=float(best_validation_score if best_validation_score is not None else float("inf")),
                        best_epoch=int(best_epoch or 0), best_global_step=int(best_global_step or 0))
     if experiment_metadata is not None:

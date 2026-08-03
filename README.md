@@ -55,6 +55,12 @@ it never projects a provisional query range. Its camera correction is applied
 only when both center anchors and both center camera samples are valid. PR3
 does not implement L1 transfer, KD, or camera-guided LiDAR-only inference.
 
+`kitti_relation_l0_pilot.yaml` is the L0-only smoke pilot.  Use
+`kitti_relation_g_pilot.yaml` for the B0/L0/G comparison pilot.  Both require
+the same row contract, width, splits, and processed data; do not mix processed
+frames created at different widths under one dataset root.  Judge G only by
+L0-versus-G MAE/RMSE on `camera_guidance_valid`, not the full generated mask.
+
 ## Resumable experiments
 
 The three training entry points write isolated experiments under
